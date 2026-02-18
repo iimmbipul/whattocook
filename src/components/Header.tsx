@@ -17,7 +17,7 @@ export default function Header() {
     if (!user) return null;
 
     return (
-        <header className="sticky top-0 z-50 w-full border-b border-brand-light/10 bg-brand-darkest/95 backdrop-blur-md text-brand-light">
+        <header className="sticky top-0 z-50 w-full border-b border-brand-light/10 bg-brand-darkest/95 backdrop-blur-md text-brand-light pt-[env(safe-area-inset-top)]">
             <div className="container mx-auto px-4 h-16 flex items-center justify-between">
 
                 {/* Logo Section */}
