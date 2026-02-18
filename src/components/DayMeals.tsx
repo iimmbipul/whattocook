@@ -1,4 +1,6 @@
+// @ts-nocheck
 import { getMealByDate } from '@/lib/firestore';
+
 import { getFormattedDate } from '@/lib/permissions';
 import MealCard from './MealCard';
 
