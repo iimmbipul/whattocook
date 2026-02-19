@@ -206,9 +206,9 @@ export async function getMemberCount(): Promise<number> {
  * Get all household members (Users + Members + Cooks)
  * Returns a list of potential assignees for responsibility
  */
-export async function getAllHouseholdMembers(): Promise<{ uid: string; email: string; role: string; label: string }[]> {
+export async function getAllHouseholdMembers(): Promise<{ uid: string; email: string; role: string; label: string; phoneNumber?: string }[]> {
     try {
-        const members: { uid: string; email: string; role: string; label: string }[] = [];
+        const members: { uid: string; email: string; role: string; label: string; phoneNumber?: string }[] = [];
 
         // Helper to fetch from a collection and map
         const fetchAndMap = async (collectionName: string, role: string) => {
@@ -220,7 +220,8 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
                         uid: doc.id,
                         email: data.email,
                         role: role,
-                        label: data.email.split('@')[0] // Use username as label
+                        label: data.email.split('@')[0], // Use username as label
+                        phoneNumber: data.phoneNumber
                     });
                 }
             });

@@ -2,7 +2,7 @@
 
 import { db } from './firebase';
 import { collection, doc, getDoc, updateDoc, serverTimestamp, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
-import { MealDocument } from '@/types/meal';
+import { MealDocument, MealItem } from '@/types/meal';
 
 const MEALS_COLLECTION = 'dailymenu';
 
@@ -385,5 +385,62 @@ export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolea
     } catch (error: any) {
         console.error('Error updating meal dates:', error);
         return { success: false, updated: 0, error: error.message || 'Unknown error occurred' };
+    }
+}
+
+/**
+ * Get meals for a specific user (Assigned to Cook OR Attending)
+ */
+export async function getUserMeals(userId: string): Promise<{
+    assigned: { date: string; mealType: string; meal: MealItem }[];
+    attending: { date: string; mealType: string; meal: MealItem }[];
+}> {
+    try {
+        const allMeals = await getAllMeals();
+        const assigned: { date: string; mealType: string; meal: MealItem }[] = [];
+        const attending: { date: string; mealType: string; meal: MealItem }[] = [];
+
+        allMeals.forEach(doc => {
+            // Check Responsibility
+            if (doc.responsibility?.breakfastLunchId === userId) {
+                if (doc.breakfast) assigned.push({ date: doc.date, mealType: 'Breakfast', meal: doc.breakfast });
+                if (doc.lunch) assigned.push({ date: doc.date, mealType: 'Lunch', meal: doc.lunch });
+            }
+            if (doc.responsibility?.dinnerId === userId) {
+                if (doc.dinner) assigned.push({ date: doc.date, mealType: 'Dinner', meal: doc.dinner });
+            }
+
+            // Check Attendance
+            // If user record exists in attendance map
+            const userAttendance = doc.attendance?.[userId];
+            if (userAttendance) {
+                if (userAttendance.breakfast && doc.breakfast) attending.push({ date: doc.date, mealType: 'Breakfast', meal: doc.breakfast });
+                if (userAttendance.lunch && doc.lunch) attending.push({ date: doc.date, mealType: 'Lunch', meal: doc.lunch });
+                if (userAttendance.dinner && doc.dinner) attending.push({ date: doc.date, mealType: 'Dinner', meal: doc.dinner });
+            } else {
+                // Default: If no record, assume eating? Or assume not?
+                // In MealCard we assumed "eating" if record doesn't exist.
+                // But for "My Plates" list, maybe only show explicit or default "eating".
+                // Let's stick to: If record undefined => Eating (default).
+                if (doc.breakfast) attending.push({ date: doc.date, mealType: 'Breakfast', meal: doc.breakfast });
+                if (doc.lunch) attending.push({ date: doc.date, mealType: 'Lunch', meal: doc.lunch });
+                if (doc.dinner) attending.push({ date: doc.date, mealType: 'Dinner', meal: doc.dinner });
+            }
+        });
+
+        // Sort by date
+        const sortFn = (a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime();
+        assigned.sort(sortFn);
+        attending.sort(sortFn);
+
+        // Filter out past cooking duties (assigned)
+        // We keep today and future
+        const todayStr = new Date().toISOString().split('T')[0];
+        const futureAssigned = assigned.filter(item => item.date >= todayStr);
+
+        return { assigned: futureAssigned, attending };
+    } catch (error) {
+        console.error('Error getting user meals:', error);
+        return { assigned: [], attending: [] };
     }
 }

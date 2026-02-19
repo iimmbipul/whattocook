@@ -3,7 +3,7 @@
 import { MealItem, UserRole } from '@/types/meal';
 import { useState } from 'react';
 import EditMealModal from './EditMealModal';
-import { Pencil, Check, Leaf, UserX, UserCheck, Users } from 'lucide-react';
+import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone } from 'lucide-react';
 import { toggleMealAttendance } from '@/lib/firestore';
 
 interface MealCardProps {
@@ -17,6 +17,7 @@ interface MealCardProps {
     currentUserId: string;
     userRole: UserRole;
     responsibleMemberName?: string; // Name of the person responsible for this meal
+    responsibleMemberPhone?: string; // Phone number of the person responsible
 }
 
 export default function MealCard({
@@ -30,6 +31,7 @@ export default function MealCard({
     currentUserId,
     userRole,
     responsibleMemberName,
+    responsibleMemberPhone,
     onRefresh
 }: MealCardProps & { onRefresh: () => void }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -114,6 +116,16 @@ export default function MealCard({
                                             <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full w-fit border border-amber-100">
                                                 <span className="text-xs">👑</span>
                                                 <span>Chef: {responsibleMemberName}</span>
+                                                {responsibleMemberPhone && (
+                                                    <a
+                                                        href={`tel:${responsibleMemberPhone}`}
+                                                        className="ml-1 p-1 bg-green-100 text-green-600 rounded-full hover:bg-green-200 transition-colors"
+                                                        title={`Call ${responsibleMemberName}`}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        <Phone size={12} fill="currentColor" />
+                                                    </a>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -239,6 +251,7 @@ export default function MealCard({
                 mealType={mealType}
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
+                onRefresh={onRefresh}
             />
         </>
     );

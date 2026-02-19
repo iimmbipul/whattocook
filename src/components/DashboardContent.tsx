@@ -23,7 +23,7 @@ export default function DashboardContent() {
     const [selectedMeal, setSelectedMeal] = useState<MealDocument | null>(null);
     const [mealsLoading, setMealsLoading] = useState(true);
     const [memberCount, setMemberCount] = useState<number>(0);
-    const [members, setMembers] = useState<{ uid: string; email: string; role: string; label: string }[]>([]);
+    const [members, setMembers] = useState<{ uid: string; email: string; role: string; label: string; phoneNumber?: string }[]>([]);
 
     // Fetch member count
     useEffect(() => {
@@ -130,8 +130,16 @@ export default function DashboardContent() {
             return members.find(m => m.uid === uid)?.label;
         };
 
+        const getResponsiblePhone = (uid?: string) => {
+            if (!uid) return undefined;
+            return members.find(m => m.uid === uid)?.phoneNumber;
+        };
+
         const breakfastLunchResp = getResponsibleName(meal.responsibility?.breakfastLunchId);
+        const breakfastLunchPhone = getResponsiblePhone(meal.responsibility?.breakfastLunchId);
+
         const dinnerResp = getResponsibleName(meal.responsibility?.dinnerId);
+        const dinnerPhone = getResponsiblePhone(meal.responsibility?.dinnerId);
 
         return (
             <div className={`${sectionClasses} ${editIndicator}`}>
@@ -157,6 +165,7 @@ export default function DashboardContent() {
                         currentUserId={user.uid}
                         userRole={user.role}
                         responsibleMemberName={breakfastLunchResp}
+                        responsibleMemberPhone={breakfastLunchPhone}
                         onRefresh={fetchMealData}
                     />
                     <MealCard
@@ -170,6 +179,7 @@ export default function DashboardContent() {
                         currentUserId={user.uid}
                         userRole={user.role}
                         responsibleMemberName={breakfastLunchResp}
+                        responsibleMemberPhone={breakfastLunchPhone}
                         onRefresh={fetchMealData}
                     />
                     <MealCard
@@ -183,6 +193,7 @@ export default function DashboardContent() {
                         currentUserId={user.uid}
                         userRole={user.role}
                         responsibleMemberName={dinnerResp}
+                        responsibleMemberPhone={dinnerPhone}
                         onRefresh={fetchMealData}
                     />
                 </div>

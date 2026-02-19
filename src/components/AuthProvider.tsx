@@ -27,13 +27,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         // Check for existing user session on mount
         const checkAuth = async () => {
+            // 1. Try server-side cookie (preferred)
             const currentUser = await getCurrentUser();
-            setUser(currentUser);
+
+            if (currentUser) {
+                setUser(currentUser);
+                // Sync to local storage
+                localStorage.setItem('meal_planner_user', JSON.stringify(currentUser));
+            } else {
+                // 2. Fallback to localStorage (if cookie is lost/expired but client session intended)
+                const stored = localStorage.getItem('meal_planner_user');
+                if (stored) {
+                    try {
+                        setUser(JSON.parse(stored));
+                    } catch (e) {
+                        localStorage.removeItem('meal_planner_user');
+                    }
+                }
+            }
             setLoading(false);
         };
 
         checkAuth();
     }, []);
+
+    // Sync user state changes to localStorage
+    useEffect(() => {
+        if (user) {
+            localStorage.setItem('meal_planner_user', JSON.stringify(user));
+        }
+    }, [user]);
 
     return (
         <AuthContext.Provider value={{ user, loading, setUser }}>

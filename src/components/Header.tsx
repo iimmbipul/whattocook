@@ -11,6 +11,7 @@ export default function Header() {
 
     const handleLogout = async () => {
         await logout();
+        localStorage.removeItem('meal_planner_user');
         router.push('/login');
     };
 
@@ -36,21 +37,6 @@ export default function Header() {
                 {/* Right Side: Greeting & Actions */}
                 <div className="flex items-center gap-6">
 
-                    {/* Personalized Greeting */}
-                    <div className="hidden sm:flex flex-col items-end border-r border-brand-light/20 pr-6">
-                        <span className="text-[10px] uppercase tracking-[0.2em] text-brand-secondary font-bold">
-                            Welcome back
-                        </span>
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold tracking-wide text-brand-light">
-                                {user.email?.split('@')[0]}
-                            </span>
-                            <span className="bg-brand-light/20 text-brand-light text-[10px] px-2 py-0.5 rounded-full font-bold uppercase">
-                                {user.role}
-                            </span>
-                        </div>
-                    </div>
-
                     {/* Action Hub */}
                     <nav className="flex items-center gap-2">
                         {user.role === 'user' && (
@@ -63,13 +49,42 @@ export default function Header() {
                             </button>
                         )}
 
-                        <button
-                            onClick={handleLogout}
-                            className="flex items-center gap-2 ml-2 pl-4 pr-5 py-2 bg-brand-primary hover:bg-brand-secondary rounded-full text-sm font-bold transition-all shadow-md active:scale-95 text-white"
-                        >
-                            <LogOut size={16} />
-                            <span>Logout</span>
-                        </button>
+                        {/* Profile Dropdown */}
+                        <div className="relative group/profile ml-2">
+                            <button className="flex items-center gap-3 pl-3 pr-4 py-1.5 bg-brand-light/10 hover:bg-brand-light/20 rounded-full transition-all border border-brand-light/10">
+                                <div className="text-right hidden sm:block">
+                                    <div className="text-xs text-brand-secondary font-bold uppercase tracking-wider">Welcome</div>
+                                    <div className="text-sm font-bold text-brand-light">{user.email?.split('@')[0]}</div>
+                                </div>
+                                <div className="w-8 h-8 bg-brand-secondary text-brand-darkest rounded-full flex items-center justify-center font-bold shadow-sm">
+                                    {user.email?.charAt(0).toUpperCase()}
+                                </div>
+                            </button>
+
+                            {/* Dropdown Menu */}
+                            <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden opacity-0 invisible group-hover/profile:opacity-100 group-hover/profile:visible transition-all transform origin-top-right z-50">
+                                <div className="p-2 space-y-1">
+                                    <button
+                                        onClick={() => router.push('/my-plates')}
+                                        className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-brand-light/20 rounded-lg transition-colors"
+                                    >
+                                        <UtensilsCrossed size={16} />
+                                        <span>My Plates</span>
+                                    </button>
+
+                                    <div className="h-px bg-brand-light/20 my-1" />
+
+                                    <button
+                                        onClick={handleLogout}
+                                        className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    >
+                                        <LogOut size={16} />
+                                        <span>Logout</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                     </nav>
                 </div>
             </div>
