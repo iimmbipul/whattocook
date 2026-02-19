@@ -180,8 +180,8 @@ export async function getMemberCount(): Promise<number> {
         if (!currentUser) return 0;
 
         let ownerId = currentUser.uid;
-        // If current user is a member, use their linked owner ID to find siblings
-        if (currentUser.role === 'member' && currentUser.linkedUserId) {
+        // If current user is a member or cook, use their linked owner ID to find siblings
+        if ((currentUser.role === 'member' || currentUser.role === 'cook') && currentUser.linkedUserId) {
             ownerId = currentUser.linkedUserId;
         }
 
