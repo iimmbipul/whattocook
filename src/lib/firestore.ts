@@ -7,29 +7,35 @@ import { MealDocument, MealItem } from '@/types/meal';
 const MEALS_COLLECTION = 'dailymenu';
 
 /**
- * Helper to get the Document ID (Day of Month) from a full date string
- * Example: "2026-01-31" -> "31"
- * Example: "2026-02-06" -> "6"
+ * Safely parse a Firestore timestamp into a JS Date.
+ * Handles: real Firestore Timestamp, plain {seconds, nanoseconds} object, and ISO strings.
+ */
+function resolveTimestamp(value: any): Date {
+    if (!value) return new Date();
+    if (typeof value.toDate === 'function') return value.toDate();          // Firestore Timestamp
+    if (typeof value.seconds === 'number') return new Date(value.seconds * 1000); // plain {seconds}
+    if (typeof value === 'string') return new Date(value);                   // ISO string
+    return new Date();
+}
+
+/**
+ * Helper to get the Document ID from a date — always returns zero-padded 2-digit string.
+ * Accepts: "2026-01-31" → "31" | "01" → "01" | "1" → "01" | "31" → "31"
  */
 function getDayId(dateString: string): string {
-    // Handle if the input is already just a number
+    // Already a 1 or 2 digit number (with or without leading zero)
     if (/^\d{1,2}$/.test(dateString)) {
         return parseInt(dateString, 10).toString().padStart(2, '0');
     }
-
-    const date = new Date(dateString);
-    // Use UTC date logic or local? split gives YYYY-MM-DD.
-    // Safest is to just parse the string part if it is ISO format
+    // Full ISO date e.g. "2026-01-31"
     const parts = dateString.split('-');
     if (parts.length === 3) {
         return parseInt(parts[2], 10).toString().padStart(2, '0');
     }
-
-    // Fallback to Date object parsing
+    const date = new Date(dateString);
     if (!isNaN(date.getTime())) {
         return date.getDate().toString().padStart(2, '0');
     }
-
     return dateString;
 }
 
@@ -45,21 +51,9 @@ export async function getMealByDate(date: string): Promise<MealDocument | null> 
         if (mealSnap.exists()) {
             const data = mealSnap.data();
 
-            // Safely handle timestamps
-            let createdAt = new Date();
-            let updatedAt = new Date();
-
-            if (data.created_at) {
-                createdAt = typeof data.created_at.toDate === 'function'
-                    ? data.created_at.toDate()
-                    : new Date(data.created_at);
-            }
-
-            if (data.updated_at) {
-                updatedAt = typeof data.updated_at.toDate === 'function'
-                    ? data.updated_at.toDate()
-                    : new Date(data.updated_at);
-            }
+            // Safely handle timestamps — support Firestore Timestamp, plain {seconds} object, and ISO strings
+            const createdAt = resolveTimestamp(data.created_at);
+            const updatedAt = resolveTimestamp(data.updated_at);
 
             return {
                 id: mealSnap.id,
@@ -67,6 +61,22 @@ export async function getMealByDate(date: string): Promise<MealDocument | null> 
                 created_at: createdAt,
                 updated_at: updatedAt,
             } as MealDocument;
+        }
+
+        // Fallback: try the unpadded version (e.g. "1" if padded "01" wasn't found)
+        const unpaddedId = parseInt(docId, 10).toString();
+        if (unpaddedId !== docId) {
+            const altRef = doc(db, MEALS_COLLECTION, unpaddedId);
+            const altSnap = await getDoc(altRef);
+            if (altSnap.exists()) {
+                const data = altSnap.data();
+                return {
+                    id: altSnap.id,
+                    ...data,
+                    created_at: resolveTimestamp(data.created_at),
+                    updated_at: resolveTimestamp(data.updated_at),
+                } as MealDocument;
+            }
         }
 
         return null;
@@ -265,21 +275,8 @@ export async function getAllMeals(): Promise<MealDocument[]> {
         querySnapshot.forEach((doc) => {
             const data = doc.data();
 
-            // Safely handle timestamps - they might not exist or might not be Timestamp objects
-            let createdAt = new Date();
-            let updatedAt = new Date();
-
-            if (data.created_at) {
-                createdAt = typeof data.created_at.toDate === 'function'
-                    ? data.created_at.toDate()
-                    : new Date(data.created_at);
-            }
-
-            if (data.updated_at) {
-                updatedAt = typeof data.updated_at.toDate === 'function'
-                    ? data.updated_at.toDate()
-                    : new Date(data.updated_at);
-            }
+            const createdAt = resolveTimestamp(data.created_at);
+            const updatedAt = resolveTimestamp(data.updated_at);
 
             meals.push({
                 id: doc.id,
@@ -332,8 +329,8 @@ export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolea
                 const newDate = new Date(currentYear, currentMonth, dayOfMonth);
                 const newDateString = newDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
-                // Determine new Document ID: Just the day number (e.g., "6" or "31")
-                const newDocId = dayOfMonth.toString();
+                // Determine new Document ID: zero-padded 2-digit day (e.g. "01", "22")
+                const newDocId = dayOfMonth.toString().padStart(2, '0');
 
                 console.log(`Migrating/Updating: ${meal.id} -> DocID: ${newDocId} (Date: ${newDateString})`);
 

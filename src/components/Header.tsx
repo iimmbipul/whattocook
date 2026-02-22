@@ -4,10 +4,13 @@ import { useAuth } from './AuthProvider';
 import { logout } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { Settings, LogOut, UtensilsCrossed } from 'lucide-react';
+import { useLocale } from '@/context/LocaleContext';
+import { supportedLocales, localeLabels, type SupportedLocale } from '@/lib/i18n';
 
 export default function Header() {
     const { user } = useAuth();
     const router = useRouter();
+    const { t, locale, setLocale } = useLocale();
 
     const handleLogout = async () => {
         await logout();
@@ -34,8 +37,31 @@ export default function Header() {
                     </span>
                 </div>
 
-                {/* Right Side: Greeting & Actions */}
-                <div className="flex items-center gap-6">
+                {/* Right Side */}
+                <div className="flex items-center gap-3">
+
+                    {/* Language Selector */}
+                    <div className="relative flex items-center">
+                        <span className="text-base mr-1 hidden sm:inline">🌐</span>
+                        <select
+                            value={locale}
+                            onChange={(e) => setLocale(e.target.value as SupportedLocale)}
+                            className="appearance-none bg-brand-light/10 hover:bg-brand-light/20 border border-brand-light/20 text-brand-light text-xs font-semibold rounded-full pl-2 pr-6 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-secondary/50 cursor-pointer transition-all"
+                            aria-label={t('header.selectLanguage')}
+                        >
+                            {supportedLocales.map((loc) => (
+                                <option key={loc} value={loc} className="bg-brand-darkest text-brand-light">
+                                    {localeLabels[loc]}
+                                </option>
+                            ))}
+                        </select>
+                        {/* Custom arrow */}
+                        <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-brand-light/60">
+                            <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
+                                <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                        </div>
+                    </div>
 
                     {/* Action Hub */}
                     <nav className="flex items-center gap-2">
@@ -43,7 +69,7 @@ export default function Header() {
                             <button
                                 onClick={() => router.push('/admin')}
                                 className="p-2.5 hover:bg-brand-light/10 rounded-full transition-colors group text-brand-light"
-                                title="Admin Settings"
+                                title={t('header.adminSettings')}
                             >
                                 <Settings size={20} className="group-hover:rotate-45 transition-transform duration-300" />
                             </button>
@@ -53,7 +79,7 @@ export default function Header() {
                         <div className="relative group/profile ml-2">
                             <button className="flex items-center gap-3 pl-3 pr-4 py-1.5 bg-brand-light/10 hover:bg-brand-light/20 rounded-full transition-all border border-brand-light/10">
                                 <div className="text-right hidden sm:block">
-                                    <div className="text-xs text-brand-secondary font-bold uppercase tracking-wider">Welcome</div>
+                                    <div className="text-xs text-brand-secondary font-bold uppercase tracking-wider">{t('header.welcome')}</div>
                                     <div className="text-sm font-bold text-brand-light">{user.email?.split('@')[0]}</div>
                                 </div>
                                 <div className="w-8 h-8 bg-brand-secondary text-brand-darkest rounded-full flex items-center justify-center font-bold shadow-sm">
@@ -69,7 +95,7 @@ export default function Header() {
                                         className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-brand-light/20 rounded-lg transition-colors"
                                     >
                                         <UtensilsCrossed size={16} />
-                                        <span>My Plates</span>
+                                        <span>{t('header.myPlates')}</span>
                                     </button>
 
                                     <div className="h-px bg-brand-light/20 my-1" />
@@ -79,7 +105,7 @@ export default function Header() {
                                         className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                     >
                                         <LogOut size={16} />
-                                        <span>Logout</span>
+                                        <span>{t('header.logout')}</span>
                                     </button>
                                 </div>
                             </div>

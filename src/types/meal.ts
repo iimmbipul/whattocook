@@ -2,6 +2,12 @@
 
 export type UserRole = 'user' | 'cook' | 'member';
 
+export interface MealItemTranslation {
+  item_name: string;
+  ingredients: string[];
+  cooking_instructions?: string[];
+}
+
 export interface MealItem {
   item_name: string;
   ingredients: string[];
@@ -17,6 +23,8 @@ export interface MealItem {
     carbs_g: number;
     fat_g: number;
   };
+  /** Stored translations keyed by locale code, e.g. { hi: {...}, or: {...} } */
+  translations?: Record<string, MealItemTranslation>;
 }
 
 export interface MealDocument {

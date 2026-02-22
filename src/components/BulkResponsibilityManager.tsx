@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { bulkUpdateMealResponsibility } from '@/lib/firestore';
 import { UserCheck, User, Coffee, Utensils, CalendarDays, CheckCircle2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { useLocale } from '@/context/LocaleContext';
 
 interface Member {
     uid: string;
@@ -27,15 +28,16 @@ export default function BulkResponsibilityManager({
     const [dinnerUser, setDinnerUser] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+    const { t } = useLocale();
 
     const handleApply = async () => {
         if (selectedDates.length === 0) {
-            setMessage({ type: 'error', text: 'Please select at least one date.' });
+            setMessage({ type: 'error', text: t('bulk.errorNoDate') });
             return;
         }
 
         if (!brunchUser && !dinnerUser) {
-            setMessage({ type: 'error', text: 'Please select a user to assign for at least one meal.' });
+            setMessage({ type: 'error', text: t('bulk.errorNoUser') });
             return;
         }
 
@@ -43,9 +45,6 @@ export default function BulkResponsibilityManager({
         setMessage(null);
 
         try {
-            // Updated to match the backend function signature
-            // const result = await bulkUpdateMealResponsibility(dates: string[], updates: { breakfastLunchId?: string; dinnerId?: string })
-
             const dateStrings = selectedDates.map(d => format(d, 'yyyy-MM-dd'));
 
             const updates: { breakfastLunchId?: string; dinnerId?: string } = {};
@@ -55,16 +54,13 @@ export default function BulkResponsibilityManager({
             const result = await bulkUpdateMealResponsibility(dateStrings, updates);
 
             if (result.success) {
-                setMessage({ type: 'success', text: `Successfully updated ${result.updated} meals!` });
-                // Optional: Clear selection after success? 
-                // setBrunchUser(''); 
-                // setDinnerUser('');
+                setMessage({ type: 'success', text: t('bulk.successMessage', { count: result.updated }) });
                 if (onSuccess) onSuccess();
             } else {
-                setMessage({ type: 'error', text: result.error || 'Failed to update.' });
+                setMessage({ type: 'error', text: result.error || t('bulk.errorNoUser') });
             }
         } catch (error: any) {
-            setMessage({ type: 'error', text: error.message || 'An error occurred' });
+            setMessage({ type: 'error', text: error.message || t('bulk.errorNoUser') });
         } finally {
             setLoading(false);
         }
@@ -78,10 +74,10 @@ export default function BulkResponsibilityManager({
                         <span className="bg-brand-primary/10 p-2 rounded-lg text-brand-primary">
                             <CalendarDays size={20} />
                         </span>
-                        Bulk Assign Responsibility
+                        {t('bulk.title')}
                     </h3>
                     <p className="text-sm text-brand-dark mt-1">
-                        Selected: <span className="font-bold text-brand-primary">{selectedDates.length} days</span>
+                        {t('bulk.selectedDays', { count: selectedDates.length })}
                     </p>
                 </div>
             </div>
@@ -97,7 +93,7 @@ export default function BulkResponsibilityManager({
                 {/* Breakfast + Lunch Select */}
                 <div className="space-y-2">
                     <label className="text-xs font-bold uppercase tracking-wider text-brand-dark flex items-center gap-1.5">
-                        <Coffee size={14} className="text-orange-500" /> Breakfast + Lunch
+                        <Coffee size={14} className="text-orange-500" /> {t('bulk.breakfastLunch')}
                     </label>
                     <div className="relative">
                         <select
@@ -106,7 +102,7 @@ export default function BulkResponsibilityManager({
                             disabled={loading}
                             className="w-full appearance-none bg-brand-light/5 border border-brand-light/30 rounded-xl py-3 pl-4 pr-10 text-sm font-medium text-brand-darkest focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all cursor-pointer hover:border-brand-primary/40 focus:bg-white"
                         >
-                            <option value="">-- No Change --</option>
+                            <option value="">{t('bulk.noChange')}</option>
                             {members.map(member => (
                                 <option key={member.uid} value={member.uid}>
                                     {member.label}
@@ -122,7 +118,7 @@ export default function BulkResponsibilityManager({
                 {/* Dinner Select */}
                 <div className="space-y-2">
                     <label className="text-xs font-bold uppercase tracking-wider text-brand-dark flex items-center gap-1.5">
-                        <Utensils size={14} className="text-purple-500" /> Dinner
+                        <Utensils size={14} className="text-purple-500" /> {t('bulk.dinner')}
                     </label>
                     <div className="relative">
                         <select
@@ -131,7 +127,7 @@ export default function BulkResponsibilityManager({
                             disabled={loading}
                             className="w-full appearance-none bg-brand-light/5 border border-brand-light/30 rounded-xl py-3 pl-4 pr-10 text-sm font-medium text-brand-darkest focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all cursor-pointer hover:border-brand-primary/40 focus:bg-white"
                         >
-                            <option value="">-- No Change --</option>
+                            <option value="">{t('bulk.noChange')}</option>
                             {members.map(member => (
                                 <option key={member.uid} value={member.uid}>
                                     {member.label}
@@ -157,12 +153,12 @@ export default function BulkResponsibilityManager({
                 {loading ? (
                     <>
                         <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Applying Updates...
+                        {t('bulk.applyingButton')}
                     </>
                 ) : (
                     <>
                         <CheckCircle2 size={18} />
-                        Apply to {selectedDates.length} Selected Days
+                        {t('bulk.applyButton', { count: selectedDates.length })}
                     </>
                 )}
             </button>

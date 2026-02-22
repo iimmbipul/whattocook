@@ -13,10 +13,12 @@ import { getFormattedDate } from '@/lib/permissions';
 import MealCard from './MealCard';
 import { format, isSameDay } from 'date-fns';
 import { getAllHouseholdMembers } from '@/lib/auth';
+import { useLocale } from '@/context/LocaleContext';
 
 export default function DashboardContent() {
     const { user, loading } = useAuth();
     const router = useRouter();
+    const { t } = useLocale();
 
     // State for selected date (defaults to Today)
     const [selectedDate, setSelectedDate] = useState(new Date());
@@ -72,7 +74,7 @@ export default function DashboardContent() {
             <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50 flex items-center justify-center">
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
-                    <p className="text-gray-700 font-medium">Loading...</p>
+                    <p className="text-gray-700 font-medium">{t('dashboard.loading')}</p>
                 </div>
             </div>
         );
@@ -92,8 +94,8 @@ export default function DashboardContent() {
 
     // Determine label
     let label = format(selectedDate, 'EEEE, MMMM do');
-    if (isToday) label = '📅 Today';
-    else if (isSameDay(selectedDate, new Date(Date.now() + 86400000))) label = '📅 Tomorrow';
+    if (isToday) label = t('dashboard.today');
+    else if (isSameDay(selectedDate, new Date(Date.now() + 86400000))) label = t('dashboard.tomorrow');
 
     const renderDayMeals = (
         meal: MealDocument | null,
@@ -114,7 +116,7 @@ export default function DashboardContent() {
             return (
                 <div className="bg-white rounded-xl shadow-lg p-8">
                     <h2 className="text-2xl sm:text-3xl font-bold text-brand-darkest mb-2">{label}</h2>
-                    <p className="text-brand-dark">No meal plan available for {getFormattedDate(date)}</p>
+                    <p className="text-brand-dark">{t('dashboard.noMealPlan')} {getFormattedDate(date)}</p>
                 </div>
             );
         }
@@ -147,7 +149,7 @@ export default function DashboardContent() {
                     <h2 className="text-2xl sm:text-3xl font-bold text-brand-darkest mb-1">{label}</h2>
                     <p className="text-brand-dark">{getFormattedDate(date)}</p>
                     <div className="mt-3 inline-block bg-brand-light/30 text-brand-darkest px-4 py-1.5 rounded-full text-sm font-semibold border border-brand-light">
-                        Total: {meal.total_calories} calories
+                        {t('dashboard.totalCalories', { calories: meal.total_calories })}
                     </div>
                 </div>
 
