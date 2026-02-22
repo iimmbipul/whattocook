@@ -33,7 +33,7 @@ export default function Header() {
                         <UtensilsCrossed size={20} strokeWidth={2.5} />
                     </div>
                     <span className="text-xl font-black tracking-tight italic text-brand-light">
-                        WhatTo<span className="text-brand-secondary">Cook</span>
+                        WT<span className="text-brand-secondary">C</span>
                     </span>
                 </div>
 
