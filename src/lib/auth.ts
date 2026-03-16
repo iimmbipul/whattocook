@@ -98,6 +98,17 @@ export async function getCurrentUser(): Promise<User | null> {
 
         if (userCookie && userCookie.value) {
             const user = JSON.parse(userCookie.value) as User;
+
+            // Fix for old cookies missing linkedUserId
+            if ((user.role === 'member' || user.role === 'cook') && !user.linkedUserId) {
+                const collectionName = user.role === 'member' ? MEMBERS_COLLECTION : COOKS_COLLECTION;
+                const docRef = doc(db, collectionName, user.uid);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    user.linkedUserId = docSnap.data().linkedUserId;
+                }
+            }
+
             if (!user.householdId) {
                 user.householdId = getHouseholdId(user.role, user.uid, user.linkedUserId);
             }

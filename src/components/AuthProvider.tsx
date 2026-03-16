@@ -40,10 +40,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (stored) {
                     try {
                         const parsedUser = JSON.parse(stored) as User;
-                        if (!parsedUser.householdId) {
-                            parsedUser.householdId = parsedUser.role === 'user' ? parsedUser.uid : (parsedUser.linkedUserId || parsedUser.uid);
+
+                        // If no cookie and localStorage user is missing linkedUserId, force re-login
+                        if ((parsedUser.role === 'member' || parsedUser.role === 'cook') && !parsedUser.linkedUserId) {
+                            localStorage.removeItem('meal_planner_user');
+                            setUser(null);
+                        } else {
+                            if (!parsedUser.householdId) {
+                                parsedUser.householdId = parsedUser.role === 'user' ? parsedUser.uid : (parsedUser.linkedUserId || parsedUser.uid);
+                            }
+                            setUser(parsedUser);
                         }
-                        setUser(parsedUser);
                     } catch (e) {
                         localStorage.removeItem('meal_planner_user');
                     }
