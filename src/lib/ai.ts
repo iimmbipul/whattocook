@@ -4,6 +4,15 @@ import { generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { z } from 'zod';
 
+const alternativeMealsSchema = z.object({
+    alternatives: z.array(z.object({
+        item_name: z.string(),
+        description: z.string()
+    }))
+});
+
+export type AlternativeMeal = z.infer<typeof alternativeMealsSchema>['alternatives'][0];
+
 // Initialize Groq provider with fallback error check
 const getGroqProvider = () => {
     if (!process.env.GROQ_API_KEY) {
@@ -65,5 +74,54 @@ export async function generateMealDetails(mealName: string): Promise<GeneratedMe
     } catch (error) {
         console.error("Error generating meal details with Groq:", error);
         return null;
+    }
+}
+
+export async function fetchAlternativeMeals(
+    currentMealName: string,
+    type: 'protein' | 'balanced' | 'unhealthy'
+): Promise<AlternativeMeal[]> {
+    try {
+        const groq = getGroqProvider();
+        let promptTemplate = "";
+
+        switch (type) {
+            case 'protein':
+                promptTemplate = `You are an expert nutritionist. Provide 5 high-protein meal alternatives that are similar to "${currentMealName}". The alternatives should focus on lean meats, legumes, or high-protein dairy.`;
+                break;
+            case 'balanced':
+                promptTemplate = `You are an expert nutritionist. Provide 5 balanced Indian meal diet alternatives. These should include a good mix of complex carbs, protein, and healthy fats.`;
+                break;
+            case 'unhealthy':
+                promptTemplate = `You are a comfort food chef. Provide 5 extremely tasty, indulgent, and potentially unhealthy meal alternatives. Think deep-fried, cheesy, or super sweet.`;
+                break;
+        }
+
+        const { text } = await generateText({
+            model: groq('llama-3.3-70b-versatile'),
+            system: `${promptTemplate}
+            
+            CRITICAL INSTRUCTION: Your output MUST be ONLY valid JSON matching exactly this TypeScript interface:
+            {
+              "alternatives": [
+                {
+                  "item_name": "string",
+                  "description": "string"
+                }
+              ]
+            }
+            Do NOT include any markdown formatting, markdown backticks, explanations, or extra text. Output RAW JSON only.`,
+            prompt: `Meal name: ${currentMealName}`,
+            temperature: 0.7,
+        });
+
+        const cleanedText = text.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
+        const parsed = JSON.parse(cleanedText);
+
+        const result = alternativeMealsSchema.parse(parsed);
+        return result.alternatives;
+    } catch (error) {
+        console.error("Error generating alternative meals with Groq:", error);
+        return [];
     }
 }

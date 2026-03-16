@@ -3,7 +3,8 @@
 import { MealItem, UserRole } from '@/types/meal';
 import { useState } from 'react';
 import EditMealModal from './EditMealModal';
-import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone } from 'lucide-react';
+import AlternativeMealsModal from './AlternativeMealsModal';
+import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone, Sparkles } from 'lucide-react';
 import { toggleMealAttendance } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
 
@@ -38,6 +39,7 @@ export default function MealCard({
     onRefresh
 }: MealCardProps & { onRefresh: () => void }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isBoredOpen, setIsBoredOpen] = useState(false);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
     const { t, locale } = useLocale();
 
@@ -193,33 +195,43 @@ export default function MealCard({
                         </button>
                     </div>
 
-                    {/* Attendance Toggle for Members/Owners */}
-                    {(userRole === 'user' || userRole === 'member') && canEdit && (
-                        <div className="flex justify-end">
+                    {/* Secondary Actions (Attendance & I am bored) */}
+                    {canEdit && (
+                        <div className="flex items-center justify-between mt-2">
                             <button
-                                onClick={handleToggleAttendance}
-                                disabled={loadingAttendance}
-                                className={`
-                                    flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all
-                                    ${amISkipping
-                                        ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
-                                        : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'}
-                                `}
+                                onClick={() => setIsBoredOpen(true)}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-brand-light/20 text-brand-darkest hover:bg-amber-100 hover:text-amber-800 border border-brand-light/40 hover:border-amber-200 transition-all"
                             >
-                                {loadingAttendance ? (
-                                    <span className="animate-spin text-xs">⌛</span>
-                                ) : amISkipping ? (
-                                    <>
-                                        <UserX size={16} />
-                                        {t('mealCard.imSkipping')}
-                                    </>
-                                ) : (
-                                    <>
-                                        <UserCheck size={16} />
-                                        {t('mealCard.imEating')}
-                                    </>
-                                )}
+                                <Sparkles size={16} />
+                                I'm bored
                             </button>
+
+                            {(userRole === 'user' || userRole === 'member') && (
+                                <button
+                                    onClick={handleToggleAttendance}
+                                    disabled={loadingAttendance}
+                                    className={`
+                                        flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all
+                                        ${amISkipping
+                                            ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
+                                            : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'}
+                                    `}
+                                >
+                                    {loadingAttendance ? (
+                                        <span className="animate-spin text-xs">⌛</span>
+                                    ) : amISkipping ? (
+                                        <>
+                                            <UserX size={16} />
+                                            {t('mealCard.imSkipping')}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <UserCheck size={16} />
+                                            {t('mealCard.imEating')}
+                                        </>
+                                    )}
+                                </button>
+                            )}
                         </div>
                     )}
 
@@ -261,6 +273,16 @@ export default function MealCard({
                 onClose={() => setIsModalOpen(false)}
                 onRefresh={onRefresh}
                 householdId={householdId}
+            />
+
+            <AlternativeMealsModal
+                isOpen={isBoredOpen}
+                onClose={() => setIsBoredOpen(false)}
+                currentMealName={displayName}
+                mealId={mealId}
+                mealType={mealType}
+                householdId={householdId}
+                onRefresh={onRefresh}
             />
         </>
     );
