@@ -50,9 +50,9 @@ export default function DashboardContent() {
         if (!user) return;
 
         try {
-            // Format date as Day (dd) for backend as ID is just the day number (padded)
-            const dayString = format(selectedDate, 'dd');
-            const meal = await getMealByDate(dayString, user.householdId);
+            // Provide full date string for precise specific-day retrieval
+            const fullDateString = format(selectedDate, 'yyyy-MM-dd');
+            const meal = await getMealByDate(fullDateString, user.householdId);
             setSelectedMeal(meal);
         } catch (error) {
             console.error("Error fetching meal:", error);
@@ -159,7 +159,7 @@ export default function DashboardContent() {
                     <MealCard
                         meal={meal.breakfast}
                         mealType="breakfast"
-                        mealId={meal.id}
+                        mealId={date}
                         canEdit={canEdit}
                         phoneNumber={user.phoneNumber}
                         attendance={meal.attendance}
@@ -174,7 +174,7 @@ export default function DashboardContent() {
                     <MealCard
                         meal={meal.lunch}
                         mealType="lunch"
-                        mealId={meal.id}
+                        mealId={date}
                         canEdit={canEdit}
                         phoneNumber={user.phoneNumber}
                         attendance={meal.attendance}
@@ -189,7 +189,7 @@ export default function DashboardContent() {
                     <MealCard
                         meal={meal.dinner}
                         mealType="dinner"
-                        mealId={meal.id}
+                        mealId={date}
                         canEdit={canEdit}
                         phoneNumber={user.phoneNumber}
                         attendance={meal.attendance}

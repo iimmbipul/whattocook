@@ -3,11 +3,12 @@
 import { MealItem, MealItemTranslation } from '@/types/meal';
 import { updateMeal, updateMealResponsibility } from '@/lib/firestore';
 import { getCurrentUser } from '@/lib/auth';
-import { useState } from 'react';
-import { X, Utensils, Clock, Flame, Link as LinkIcon, Image as ImageIcon, CheckCircle, ShoppingCart } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { X, Utensils, Clock, Flame, Link as LinkIcon, Image as ImageIcon, CheckCircle, ShoppingCart, Sparkles } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { translateTexts } from '@/lib/translate';
 import { supportedLocales } from '@/lib/i18n';
+import { generateMealDetails } from '@/lib/ai';
 
 interface EditMealModalProps {
     meal: MealItem;
@@ -77,10 +78,15 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
         fat_g: meal.nutrients?.fat_g?.toString() || '',
         fiber_g: meal.nutrients?.fiber_g?.toString() || '',
     });
+    const [applyToAllMonths, setApplyToAllMonths] = useState(false);
     const [loading, setLoading] = useState(false);
     const [translating, setTranslating] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState('');
     const [showSuccess, setShowSuccess] = useState(false);
+
+    // Track original name to only trigger AI if they change it manually
+    const originalNameRef = useRef(meal.item_name);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -131,7 +137,7 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
 
             const success = await updateMeal(mealId, {
                 [mealType]: updatedMeal,
-            } as any, householdId);
+            } as any, householdId, applyToAllMonths);
 
             if (success) {
                 try {
@@ -162,6 +168,43 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
     const handleClose = () => {
         setShowSuccess(false);
         onClose();
+    };
+
+    const handleNameBlur = async () => {
+        const currentName = formData.item_name.trim();
+
+        // Only generate if name is not empty
+        // And if it actually changed from the original modal load
+        if (!currentName || currentName === originalNameRef.current) return;
+
+        setIsGenerating(true);
+        setError('');
+
+        try {
+            const data = await generateMealDetails(currentName);
+            if (data) {
+                setFormData(prev => ({
+                    ...prev,
+                    ingredients: data.ingredients.join(', '),
+                    cooking_instructions: data.cooking_instructions.join('\n'),
+                    calories: data.calories.toString(),
+                    prep_time_minutes: data.prep_time_minutes.toString(),
+                    is_vegetarian: data.is_vegetarian,
+                    protein_g: data.protein_g.toString(),
+                    carbs_g: data.carbs_g.toString(),
+                    fat_g: data.fat_g.toString(),
+                    fiber_g: data.fiber_g.toString(),
+                }));
+                // Update original name to prevent redundant fetch on multiple blurs
+                originalNameRef.current = currentName;
+            } else {
+                console.warn('AI generation returned null');
+            }
+        } catch (err) {
+            console.error('Failed to generate AI data:', err);
+        } finally {
+            setIsGenerating(false);
+        }
     };
 
     if (!isOpen) return null;
@@ -231,6 +274,15 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
                                 <span>Translations for all languages will be generated automatically when you save.</span>
                             </div>
 
+                            {/* AI Notice */}
+                            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-amber-800 shadow-sm">
+                                <Sparkles size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                                <div>
+                                    <strong className="block mb-0.5 text-sm">AI Auto-Fill Active</strong>
+                                    Type a new meal name below and click completely out of the box. Our WTC AI will automatically estimate ingredients, instructions, and nutritional facts for you!
+                                </div>
+                            </div>
+
                             {/* Image Preview Card */}
                             {formData.image_url && (
                                 <div className="relative h-32 w-full rounded-2xl overflow-hidden border border-brand-light/30 group">
@@ -247,19 +299,29 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
                                 </div>
                             )}
 
-                            <div>
+                            <div className="relative">
                                 <label className={labelClasses}>{t('editMeal.mealNameLabel')}</label>
-                                <input
-                                    type="text"
-                                    value={formData.item_name}
-                                    onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
-                                    className={inputClasses}
-                                    placeholder={t('editMeal.mealNamePlaceholder')}
-                                    required
-                                />
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={formData.item_name}
+                                        onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
+                                        onBlur={handleNameBlur}
+                                        className={`${inputClasses} pr-10`}
+                                        placeholder={t('editMeal.mealNamePlaceholder')}
+                                        required
+                                        disabled={isGenerating}
+                                    />
+                                    {isGenerating && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                            <div className="w-5 h-5 border-2 border-brand-primary/30 border-t-brand-primary rounded-full animate-spin" />
+                                        </div>
+                                    )}
+                                </div>
+                                {isGenerating && <span className="absolute -bottom-5 left-1 text-[10px] text-brand-primary font-bold animate-pulse">WTC AI is writing recipes & nutrition...</span>}
                             </div>
 
-                            <div>
+                            <div className={isGenerating ? "opacity-50 pointer-events-none transition-opacity mt-4" : "transition-opacity mt-4"}>
                                 <label className={labelClasses}>{t('editMeal.ingredientsLabel')}</label>
                                 <textarea
                                     value={formData.ingredients}
@@ -336,15 +398,15 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
                             <div className="space-y-4">
                                 <div>
                                     <label className={labelClasses}><LinkIcon size={14} /> {t('editMeal.recipeUrlLabel')}</label>
-                                    <input type="url" value={formData.recipe_url} onChange={(e) => setFormData({ ...formData, recipe_url: e.target.value })} className={inputClasses} placeholder={t('editMeal.recipeUrlPlaceholder')} />
+                                    <input type="url" value={formData.recipe_url} onChange={(e) => setFormData({ ...formData, recipe_url: e.target.value })} className={inputClasses} placeholder={t('editMeal.recipeUrlPlaceholder')} disabled={isGenerating} />
                                 </div>
                                 <div>
                                     <label className={labelClasses}><ImageIcon size={14} /> {t('editMeal.imageUrlLabel')}</label>
-                                    <input type="url" value={formData.image_url} onChange={(e) => setFormData({ ...formData, image_url: e.target.value })} className={inputClasses} placeholder={t('editMeal.imageUrlPlaceholder')} />
+                                    <input type="url" value={formData.image_url} onChange={(e) => setFormData({ ...formData, image_url: e.target.value })} className={inputClasses} placeholder={t('editMeal.imageUrlPlaceholder')} disabled={isGenerating} />
                                 </div>
                             </div>
 
-                            <label className="flex items-center p-4 bg-brand-light/10 border border-brand-light/20 rounded-2xl cursor-pointer hover:bg-brand-light/20 transition-colors group">
+                            <label className={`flex items-center p-4 bg-brand-light/10 border border-brand-light/20 rounded-2xl cursor-pointer hover:bg-brand-light/20 transition-colors group ${isGenerating ? 'opacity-50 pointer-events-none' : ''}`}>
                                 <input
                                     type="checkbox"
                                     checked={formData.is_vegetarian}
@@ -357,6 +419,39 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
                                 </div>
                                 <span className="ml-auto text-xl group-hover:scale-110 transition-transform">🌱</span>
                             </label>
+
+                            {/* Scope Toggle */}
+                            <div className="bg-brand-light/10 p-4 rounded-2xl border border-brand-light/30">
+                                <label className="text-sm font-bold text-brand-darkest mb-3 block">Update Scope</label>
+                                <div className="space-y-2">
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="scope"
+                                            className="w-4 h-4 text-brand-primary"
+                                            checked={!applyToAllMonths}
+                                            onChange={() => setApplyToAllMonths(false)}
+                                        />
+                                        <div>
+                                            <span className="block text-sm font-semibold text-brand-darkest">Only this date</span>
+                                            <span className="block text-xs text-brand-dark/70">Changes apply to {mealId} only.</span>
+                                        </div>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="scope"
+                                            className="w-4 h-4 text-brand-primary"
+                                            checked={applyToAllMonths}
+                                            onChange={() => setApplyToAllMonths(true)}
+                                        />
+                                        <div>
+                                            <span className="block text-sm font-semibold text-brand-darkest">Every month</span>
+                                            <span className="block text-xs text-brand-dark/70">Updates the monthly template for this day.</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
 
                             {/* Action Buttons */}
                             <div className="flex gap-3 pt-2 sticky bottom-0 bg-white">

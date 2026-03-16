@@ -94,17 +94,23 @@ async function findDocInCollection(collectionName: string, dayId: string): Promi
 
 /**
  * Get a meal document by date (YYYY-MM-DD) for a specific household.
- * Tries the household collection first, falls back to the template.
+ * Tries the household collection specific date first, then the household generic day, then template.
  */
 export async function getMealByDate(date: string, householdId: string): Promise<MealDocument | null> {
     try {
+        const hhCollection = getHouseholdCollection(householdId);
+
+        // 1. Try specific date in household (e.g. 2026-03-17)
+        let meal = await findDocInCollection(hhCollection, date);
+        if (meal) return meal;
+
         const docId = getDayId(date);
 
-        // 1. Try household-specific collection
-        const householdMeal = await findDocInCollection(getHouseholdCollection(householdId), docId);
-        if (householdMeal) return householdMeal;
+        // 2. Try generic day in household
+        meal = await findDocInCollection(hhCollection, docId);
+        if (meal) return meal;
 
-        // 2. Fallback to master template
+        // 3. Fallback to master template
         return await findDocInCollection(TEMPLATES_COLLECTION, docId);
     } catch (error) {
         console.error('Error fetching meal by date:', error);
@@ -136,32 +142,38 @@ export async function getTomorrowMeal(householdId: string): Promise<MealDocument
 
 /**
  * Ensure a meal document exists in the household collection.
- * If it doesn't, copies it from the template collection.
+ * If it doesn't, copies it from the template collection or generic fallback.
  * Returns true if the doc exists (or was successfully copied).
  */
-async function ensureHouseholdDoc(dayId: string, householdId: string): Promise<boolean> {
+async function ensureHouseholdDoc(docId: string, householdId: string): Promise<boolean> {
     const hhCollection = getHouseholdCollection(householdId);
-    const hhRef = doc(db, hhCollection, dayId);
+    const hhRef = doc(db, hhCollection, docId);
     const hhSnap = await getDoc(hhRef);
 
     if (hhSnap.exists()) return true;
 
-    // Also check unpadded
-    const unpaddedId = parseInt(dayId, 10).toString();
-    if (unpaddedId !== dayId) {
-        const altRef = doc(db, hhCollection, unpaddedId);
-        const altSnap = await getDoc(altRef);
-        if (altSnap.exists()) return true;
+    // It doesn't exist. We need to copy from fallback.
+    let fallbackDoc = null;
+    const isFullDate = /^\d{4}-\d{2}-\d{2}$/.test(docId);
+
+    if (isFullDate) {
+        const dayId = getDayId(docId);
+        // Try household unpadded/padded
+        fallbackDoc = await findDocInCollection(hhCollection, dayId);
+        if (!fallbackDoc) fallbackDoc = await findDocInCollection(hhCollection, parseInt(dayId, 10).toString());
+        if (!fallbackDoc) fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, dayId);
+    } else {
+        // Just day ID, fallback is template
+        fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, docId);
+        if (!fallbackDoc) fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, parseInt(docId, 10).toString());
     }
 
-    // Copy from template
-    const templateDoc = await findDocInCollection(TEMPLATES_COLLECTION, dayId);
-    if (!templateDoc) return false; // No template either
+    if (!fallbackDoc) return false;
 
-    // Write the template data (minus our parsed 'id') into the household collection
-    const { id, created_at, updated_at, ...rest } = templateDoc;
+    const { id, created_at, updated_at, ...rest } = fallbackDoc;
     await setDoc(hhRef, {
         ...rest,
+        date: isFullDate ? docId : rest.date,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
     });
@@ -179,10 +191,13 @@ async function ensureHouseholdDoc(dayId: string, householdId: string): Promise<b
 export async function updateMeal(
     mealId: string,
     updates: Partial<MealDocument>,
-    householdId: string
+    householdId: string,
+    applyToAllMonths: boolean = false
 ): Promise<boolean> {
     try {
-        const docId = getDayId(mealId);
+        const isFullDate = /^\d{4}-\d{2}-\d{2}$/.test(mealId);
+        const docId = (applyToAllMonths && isFullDate) ? getDayId(mealId) : mealId;
+
         await ensureHouseholdDoc(docId, householdId);
 
         const hhCollection = getHouseholdCollection(householdId);
@@ -192,6 +207,18 @@ export async function updateMeal(
             ...updates,
             updated_at: serverTimestamp(),
         });
+
+        // If applying to all months, also update the specific date doc if it exists so UI updates instantly
+        if (applyToAllMonths && isFullDate) {
+            const specificRef = doc(db, hhCollection, mealId);
+            const snap = await getDoc(specificRef);
+            if (snap.exists()) {
+                await updateDoc(specificRef, {
+                    ...updates,
+                    updated_at: serverTimestamp(),
+                });
+            }
+        }
 
         return true;
     } catch (error) {
@@ -211,7 +238,7 @@ export async function toggleMealAttendance(
     householdId: string
 ): Promise<boolean> {
     try {
-        const docId = getDayId(mealId);
+        const docId = mealId; // Always specific date
         await ensureHouseholdDoc(docId, householdId);
 
         const hhCollection = getHouseholdCollection(householdId);
@@ -227,7 +254,11 @@ export async function toggleMealAttendance(
         userAttendance[mealType] = !isSkipping;
 
         await updateDoc(mealRef, {
-            [`attendance.${userId}`]: userAttendance
+            ...data,
+            attendance: {
+                ...currentAttendance,
+                [userId]: userAttendance
+            }
         });
 
         return true;
@@ -247,7 +278,7 @@ export async function updateMealResponsibility(
     householdId: string
 ): Promise<boolean> {
     try {
-        const docId = getDayId(mealId);
+        const docId = mealId; // Always specific date
         await ensureHouseholdDoc(docId, householdId);
 
         const hhCollection = getHouseholdCollection(householdId);
@@ -281,7 +312,7 @@ export async function bulkUpdateMealResponsibility(
 
         // Ensure all household docs exist first (copy-on-write)
         for (const dateStr of dates) {
-            const docId = getDayId(dateStr);
+            const docId = dateStr; // Specific date
             await ensureHouseholdDoc(docId, householdId);
         }
 
@@ -289,7 +320,7 @@ export async function bulkUpdateMealResponsibility(
         let count = 0;
 
         dates.forEach(dateStr => {
-            const docId = getDayId(dateStr);
+            const docId = dateStr; // Specific date
             const mealRef = doc(db, hhCollection, docId);
 
             const updateData: any = {};
@@ -515,15 +546,31 @@ export async function getUserMeals(userId: string, householdId: string): Promise
         const currentYear = today.getFullYear();
         const currentMonth = today.getMonth() + 1; // 1-12
 
+        const activeMealsMap = new Map<string, MealDocument>(); // Key is YYYY-MM-DD
+
         allMeals.forEach(doc => {
-            // Synthesize the correct date for the current month using the doc.id (which is 01..31)
-            const dayNum = parseInt(doc.id, 10);
-            let realDateStr = doc.date;
+            const isFullDate = /^\d{4}-\d{2}-\d{2}$/.test(doc.id);
+            if (isFullDate) {
+                activeMealsMap.set(doc.id, doc);
+            } else {
+                const dayNum = parseInt(doc.id, 10);
+                if (!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
+                    // Map to current month
+                    const dateKey = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+                    if (!activeMealsMap.has(dateKey)) activeMealsMap.set(dateKey, doc);
 
-            if (!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
-                realDateStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+                    // Map to next month
+                    let nextMonth = currentMonth + 1;
+                    let nextYear = currentYear;
+                    if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+
+                    const nextDateKey = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+                    if (!activeMealsMap.has(nextDateKey)) activeMealsMap.set(nextDateKey, doc);
+                }
             }
+        });
 
+        activeMealsMap.forEach((doc, realDateStr) => {
             // Check Responsibility
             if (doc.responsibility?.breakfastLunchId === userId) {
                 if (doc.breakfast) assigned.push({ date: realDateStr, mealType: 'Breakfast', meal: doc.breakfast });
