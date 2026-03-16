@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Flame, Scale, Pizza, Search, CheckCircle, Utensils } from 'lucide-react';
 import { fetchAlternativeMeals, generateMealDetails, AlternativeMeal } from '@/lib/ai';
 import { updateMeal } from '@/lib/firestore';
@@ -69,12 +69,24 @@ export default function AlternativeMealsModal({
         balanced: [],
         unhealthy: []
     });
+    const fetchedTabs = useRef<Set<string>>(new Set());
     const [isLoadingMeals, setIsLoadingMeals] = useState<boolean>(false);
     const [updatingMealName, setUpdatingMealName] = useState<string | null>(null);
 
+    // Reset fetched tabs when the modal closes or meal name changes
+    useEffect(() => {
+        if (!isOpen) {
+            fetchedTabs.current.clear();
+            setMealsMap({ protein: [], balanced: [], unhealthy: [] });
+            setActiveTab('protein');
+        }
+    }, [isOpen, currentMealName]);
+
     useEffect(() => {
         if (!isOpen) return;
-        if (mealsMap[activeTab].length > 0) return; // Already fetched
+
+        const cacheKey = `${currentMealName}-${activeTab}`;
+        if (fetchedTabs.current.has(cacheKey)) return;
 
         const loadMeals = async () => {
             setIsLoadingMeals(true);
@@ -84,6 +96,7 @@ export default function AlternativeMealsModal({
                     ...prev,
                     [activeTab]: results
                 }));
+                fetchedTabs.current.add(cacheKey);
             } catch (err) {
                 console.error("Failed to load alternatives:", err);
             } finally {
@@ -92,7 +105,7 @@ export default function AlternativeMealsModal({
         };
 
         loadMeals();
-    }, [isOpen, activeTab, currentMealName, mealsMap]);
+    }, [isOpen, activeTab, currentMealName]);
 
     if (!isOpen) return null;
 
