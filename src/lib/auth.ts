@@ -129,6 +129,54 @@ export async function isAuthenticated(): Promise<boolean> {
 }
 
 /**
+ * Refresh current session from db, patch old cookies, update token
+ */
+export async function refreshSession(): Promise<User | null> {
+    try {
+        const cookieStore = await cookies();
+        const userCookie = cookieStore.get(COOKIE_NAME);
+        if (!userCookie || !userCookie.value) return null;
+
+        const parsedUser = JSON.parse(userCookie.value) as User;
+
+        let targetCollection = USERS_COLLECTION;
+        if (parsedUser.role === 'member') targetCollection = MEMBERS_COLLECTION;
+        if (parsedUser.role === 'cook') targetCollection = COOKS_COLLECTION;
+
+        const docRef = doc(db, targetCollection, parsedUser.uid);
+        const docSnap = await getDoc(docRef);
+
+        if (!docSnap.exists()) {
+            cookieStore.delete(COOKIE_NAME);
+            return null;
+        }
+
+        const userData = docSnap.data();
+
+        const freshUser: User = {
+            uid: docSnap.id,
+            email: userData.email,
+            role: parsedUser.role,
+            phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
+            linkedUserId: userData.linkedUserId,
+            householdId: getHouseholdId(parsedUser.role, docSnap.id, userData.linkedUserId),
+        };
+
+        cookieStore.set(COOKIE_NAME, JSON.stringify(freshUser), {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 60 * 60 * 24 * 7, // 1 week
+            path: '/',
+        });
+
+        return freshUser;
+    } catch (error) {
+        console.error('Session refresh error:', error);
+        return null;
+    }
+}
+
+/**
  * Create a new user in Firestore
  */
 export async function createUser(

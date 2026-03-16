@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { getCurrentUser } from '@/lib/auth';
+import { refreshSession, getCurrentUser } from '@/lib/auth';
 import { User } from '@/types/meal';
 
 interface AuthContextType {
@@ -27,13 +27,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         // Check for existing user session on mount
         const checkAuth = async () => {
-            // 1. Try server-side cookie (preferred)
-            const currentUser = await getCurrentUser();
+            // 1. Try server-side cookie and refresh it concurrently if possible
+            const refreshedUser = await refreshSession();
 
-            if (currentUser) {
-                setUser(currentUser);
+            if (refreshedUser) {
+                setUser(refreshedUser);
                 // Sync to local storage
-                localStorage.setItem('meal_planner_user', JSON.stringify(currentUser));
+                localStorage.setItem('meal_planner_user', JSON.stringify(refreshedUser));
             } else {
                 // 2. Fallback to localStorage (if cookie is lost/expired but client session intended)
                 const stored = localStorage.getItem('meal_planner_user');
