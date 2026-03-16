@@ -39,7 +39,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const stored = localStorage.getItem('meal_planner_user');
                 if (stored) {
                     try {
-                        setUser(JSON.parse(stored));
+                        const parsedUser = JSON.parse(stored) as User;
+                        if (!parsedUser.householdId) {
+                            parsedUser.householdId = parsedUser.role === 'user' ? parsedUser.uid : (parsedUser.linkedUserId || parsedUser.uid);
+                        }
+                        setUser(parsedUser);
                     } catch (e) {
                         localStorage.removeItem('meal_planner_user');
                     }

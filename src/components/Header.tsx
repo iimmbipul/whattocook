@@ -3,7 +3,8 @@
 import { useAuth } from './AuthProvider';
 import { logout } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
-import { Settings, LogOut, UtensilsCrossed } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Settings, LogOut, UtensilsCrossed, ChevronDown } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { supportedLocales, localeLabels, type SupportedLocale } from '@/lib/i18n';
 
@@ -11,6 +12,19 @@ export default function Header() {
     const { user } = useAuth();
     const router = useRouter();
     const { t, locale, setLocale } = useLocale();
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsProfileOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleLogout = async () => {
         await logout();
@@ -76,8 +90,11 @@ export default function Header() {
                         )}
 
                         {/* Profile Dropdown */}
-                        <div className="relative group/profile ml-2">
-                            <button className="flex items-center gap-3 pl-3 pr-4 py-1.5 bg-brand-light/10 hover:bg-brand-light/20 rounded-full transition-all border border-brand-light/10">
+                        <div className="relative ml-2" ref={dropdownRef}>
+                            <button
+                                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                                className={`flex items-center gap-3 pl-3 pr-4 py-1.5 ${isProfileOpen ? 'bg-brand-light/20' : 'bg-brand-light/10'} hover:bg-brand-light/20 rounded-full transition-all border border-brand-light/10`}
+                            >
                                 <div className="text-right hidden sm:block">
                                     <div className="text-xs text-brand-secondary font-bold uppercase tracking-wider">{t('header.welcome')}</div>
                                     <div className="text-sm font-bold text-brand-light">{user.email?.split('@')[0]}</div>
@@ -88,10 +105,13 @@ export default function Header() {
                             </button>
 
                             {/* Dropdown Menu */}
-                            <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden opacity-0 invisible group-hover/profile:opacity-100 group-hover/profile:visible transition-all transform origin-top-right z-50">
+                            <div className={`absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden transition-all transform origin-top-right z-50 ${isProfileOpen ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}`}>
                                 <div className="p-2 space-y-1">
                                     <button
-                                        onClick={() => router.push('/my-plates')}
+                                        onClick={() => {
+                                            setIsProfileOpen(false);
+                                            router.push('/my-plates');
+                                        }}
                                         className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-brand-light/20 rounded-lg transition-colors"
                                     >
                                         <UtensilsCrossed size={16} />
@@ -101,7 +121,10 @@ export default function Header() {
                                     <div className="h-px bg-brand-light/20 my-1" />
 
                                     <button
-                                        onClick={handleLogout}
+                                        onClick={() => {
+                                            setIsProfileOpen(false);
+                                            handleLogout();
+                                        }}
                                         className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                     >
                                         <LogOut size={16} />

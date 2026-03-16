@@ -97,7 +97,11 @@ export async function getCurrentUser(): Promise<User | null> {
         const userCookie = cookieStore.get(COOKIE_NAME);
 
         if (userCookie && userCookie.value) {
-            return JSON.parse(userCookie.value) as User;
+            const user = JSON.parse(userCookie.value) as User;
+            if (!user.householdId) {
+                user.householdId = getHouseholdId(user.role, user.uid, user.linkedUserId);
+            }
+            return user;
         }
     } catch (error) {
         // Ignore parsing errors
