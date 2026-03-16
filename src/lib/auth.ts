@@ -262,6 +262,8 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
             fetchLinkedAndMap(COOKS_COLLECTION, 'cook')
         ]);
 
+        console.log(`[Prod Debug] Fetched all household members for UID: ${currentUser.uid}, Computed Household ID: ${householdId}, Total Members Found: ${members.length}`);
+
         return members;
     } catch (error) {
         console.error('Error fetching household members:', error);
