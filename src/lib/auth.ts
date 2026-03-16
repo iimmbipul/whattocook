@@ -177,6 +177,27 @@ export async function refreshSession(): Promise<User | null> {
 }
 
 /**
+ * Restore cookie session from client-provided user data (e.g. from localStorage).
+ * This acts as our "refresh token" mechanism when browser clears cookies (like iOS PWA) 
+ * but client state is retained.
+ */
+export async function restoreCookieFromClient(user: User): Promise<boolean> {
+    try {
+        const cookieStore = await cookies();
+        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 60 * 60 * 24 * 7, // 1 week
+            path: '/',
+        });
+        return true;
+    } catch (error) {
+        console.error('Failed to restore cookie from client:', error);
+        return false;
+    }
+}
+
+/**
  * Create a new user in Firestore
  */
 export async function createUser(
