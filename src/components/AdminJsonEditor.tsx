@@ -5,10 +5,10 @@ import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, writeBatch } from 'firebase/firestore';
 import { useLocale } from '@/context/LocaleContext';
 
-type CollectionName = 'dailymenu' | 'users';
+type CollectionName = 'menu_templates' | 'users';
 
 export default function AdminJsonEditor() {
-    const [selectedCollection, setSelectedCollection] = useState<CollectionName>('dailymenu');
+    const [selectedCollection, setSelectedCollection] = useState<CollectionName>('menu_templates');
     const [jsonData, setJsonData] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -138,7 +138,7 @@ export default function AdminJsonEditor() {
                     onChange={(e) => setSelectedCollection(e.target.value as CollectionName)}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
                 >
-                    <option value="dailymenu">{t('adminEditor.dailyMenuOption')}</option>
+                    <option value="menu_templates">{t('adminEditor.dailyMenuOption')}</option>
                     <option value="users">{t('adminEditor.usersOption')}</option>
                 </select>
             </div>

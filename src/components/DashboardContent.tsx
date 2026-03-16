@@ -52,7 +52,7 @@ export default function DashboardContent() {
         try {
             // Format date as Day (dd) for backend as ID is just the day number (padded)
             const dayString = format(selectedDate, 'dd');
-            const meal = await getMealByDate(dayString);
+            const meal = await getMealByDate(dayString, user.householdId);
             setSelectedMeal(meal);
         } catch (error) {
             console.error("Error fetching meal:", error);
@@ -169,6 +169,7 @@ export default function DashboardContent() {
                         responsibleMemberName={breakfastLunchResp}
                         responsibleMemberPhone={breakfastLunchPhone}
                         onRefresh={fetchMealData}
+                        householdId={user.householdId}
                     />
                     <MealCard
                         meal={meal.lunch}
@@ -183,6 +184,7 @@ export default function DashboardContent() {
                         responsibleMemberName={breakfastLunchResp}
                         responsibleMemberPhone={breakfastLunchPhone}
                         onRefresh={fetchMealData}
+                        householdId={user.householdId}
                     />
                     <MealCard
                         meal={meal.dinner}
@@ -197,6 +199,7 @@ export default function DashboardContent() {
                         responsibleMemberName={dinnerResp}
                         responsibleMemberPhone={dinnerPhone}
                         onRefresh={fetchMealData}
+                        householdId={user.householdId}
                     />
                 </div>
             </div>

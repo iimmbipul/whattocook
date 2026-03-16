@@ -20,6 +20,7 @@ interface ResponsibilityManagerProps {
     members: Member[];
     canEdit: boolean;
     onRefresh: () => void;
+    householdId: string;
 }
 
 export default function ResponsibilityManager({
@@ -27,7 +28,8 @@ export default function ResponsibilityManager({
     responsibility,
     members,
     canEdit,
-    onRefresh
+    onRefresh,
+    householdId
 }: ResponsibilityManagerProps) {
     const [loading, setLoading] = useState<string | null>(null); // 'breakfastLunch' | 'dinner' | null
 
@@ -36,7 +38,7 @@ export default function ResponsibilityManager({
         setLoading(slot === 'breakfastLunchId' ? 'breakfastLunch' : 'dinner');
 
         try {
-            const success = await updateMealResponsibility(mealId, slot, userId);
+            const success = await updateMealResponsibility(mealId, slot, userId, householdId);
             if (success) {
                 onRefresh();
             }

@@ -54,4 +54,6 @@ export interface User {
   role: UserRole;
   phoneNumber: string;
   linkedUserId?: string;
+  /** Household ID: owner's uid for owners, linkedUserId for members/cooks */
+  householdId: string;
 }

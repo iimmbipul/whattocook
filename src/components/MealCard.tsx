@@ -19,6 +19,7 @@ interface MealCardProps {
     userRole: UserRole;
     responsibleMemberName?: string;
     responsibleMemberPhone?: string;
+    householdId: string;
 }
 
 export default function MealCard({
@@ -33,6 +34,7 @@ export default function MealCard({
     userRole,
     responsibleMemberName,
     responsibleMemberPhone,
+    householdId,
     onRefresh
 }: MealCardProps & { onRefresh: () => void }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -60,7 +62,7 @@ export default function MealCard({
         if (loadingAttendance) return;
         setLoadingAttendance(true);
         try {
-            await toggleMealAttendance(mealId, mealType, currentUserId, !amISkipping);
+            await toggleMealAttendance(mealId, mealType, currentUserId, !amISkipping, householdId);
             if (onRefresh) {
                 onRefresh();
             }
@@ -108,13 +110,15 @@ export default function MealCard({
                                     {displayName}
                                 </h3>
 
-                                {/* Cooking For Count */}
-                                {totalMembers > 0 && (
+                                {/* Cooking For Count & Responsibilities */}
+                                {(totalMembers > 0 || responsibleMemberName) && (
                                     <div className="flex flex-wrap gap-2 mt-1">
-                                        <div className="flex items-center gap-1.5 text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full w-fit border border-purple-100">
-                                            <Users size={14} />
-                                            <span>{t('mealCard.cookingFor')} {cookingForCount}</span>
-                                        </div>
+                                        {totalMembers > 0 && (
+                                            <div className="flex items-center gap-1.5 text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full w-fit border border-purple-100">
+                                                <Users size={14} />
+                                                <span>{t('mealCard.cookingFor')} {cookingForCount}</span>
+                                            </div>
+                                        )}
 
                                         {responsibleMemberName && (
                                             <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full w-fit border border-amber-100">
@@ -256,6 +260,7 @@ export default function MealCard({
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 onRefresh={onRefresh}
+                householdId={householdId}
             />
         </>
     );

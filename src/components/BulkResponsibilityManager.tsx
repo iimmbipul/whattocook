@@ -17,12 +17,14 @@ interface BulkResponsibilityManagerProps {
     selectedDates: Date[];
     members: Member[];
     onSuccess: () => void;
+    householdId: string;
 }
 
 export default function BulkResponsibilityManager({
     selectedDates,
     members,
-    onSuccess
+    onSuccess,
+    householdId
 }: BulkResponsibilityManagerProps) {
     const [brunchUser, setBrunchUser] = useState<string>('');
     const [dinnerUser, setDinnerUser] = useState<string>('');
@@ -51,7 +53,7 @@ export default function BulkResponsibilityManager({
             if (brunchUser) updates.breakfastLunchId = brunchUser;
             if (dinnerUser) updates.dinnerId = dinnerUser;
 
-            const result = await bulkUpdateMealResponsibility(dateStrings, updates);
+            const result = await bulkUpdateMealResponsibility(dateStrings, updates, householdId);
 
             if (result.success) {
                 setMessage({ type: 'success', text: t('bulk.successMessage', { count: result.updated }) });

@@ -16,6 +16,7 @@ interface EditMealModalProps {
     isOpen: boolean;
     onClose: () => void;
     onRefresh?: () => void;
+    householdId: string;
 }
 
 /**
@@ -59,7 +60,7 @@ async function buildTranslations(
     return translations;
 }
 
-export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose, onRefresh }: EditMealModalProps) {
+export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose, onRefresh, householdId }: EditMealModalProps) {
     const { t } = useLocale();
 
     const [formData, setFormData] = useState({
@@ -130,7 +131,7 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
 
             const success = await updateMeal(mealId, {
                 [mealType]: updatedMeal,
-            } as any);
+            } as any, householdId);
 
             if (success) {
                 try {
@@ -139,7 +140,7 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
                         const slot = (mealType === 'breakfast' || mealType === 'lunch')
                             ? 'breakfastLunchId'
                             : 'dinnerId';
-                        await updateMealResponsibility(mealId, slot, currentUser.uid);
+                        await updateMealResponsibility(mealId, slot, currentUser.uid, householdId);
                     }
                 } catch (respError) {
                     console.error('Failed to auto-assign responsibility:', respError);

@@ -27,7 +27,7 @@ export default function MyPlatesPage() {
 
         if (user) {
             const fetchMeals = async () => {
-                const result = await getUserMeals(user.uid);
+                const result = await getUserMeals(user.uid, user.householdId);
                 setData(result);
                 setDataLoading(false);
             };

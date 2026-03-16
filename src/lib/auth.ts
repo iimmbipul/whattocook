@@ -1,7 +1,7 @@
 'use server';
 
 import { db } from './firebase';
-import { collection, query, where, getDocs, addDoc, getCountFromServer } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc } from 'firebase/firestore';
 import { User, UserRole } from '@/types/meal';
 import { cookies } from 'next/headers';
 
@@ -44,6 +44,7 @@ export async function loginWithEmail(email: string, password: string): Promise<U
             role: role, // Explicitly set based on collection found
             phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
             linkedUserId: userData.linkedUserId, // Get linked ID if exists
+            householdId: getHouseholdId(role, userDoc.id, userData.linkedUserId),
         };
 
         // Create cookie
@@ -60,6 +61,15 @@ export async function loginWithEmail(email: string, password: string): Promise<U
         console.error('Login error:', error);
         return null;
     }
+}
+
+/**
+ * Derive the household ID for a user.
+ * Owners (role 'user') use their own uid; members/cooks use their linkedUserId.
+ */
+function getHouseholdId(role: UserRole, uid: string, linkedUserId?: string): string {
+    if (role === 'user') return uid;
+    return linkedUserId || uid; // fallback to own uid if no link
 }
 
 // Helper to find user in a specific collection
@@ -208,32 +218,48 @@ export async function getMemberCount(): Promise<number> {
  */
 export async function getAllHouseholdMembers(): Promise<{ uid: string; email: string; role: string; label: string; phoneNumber?: string }[]> {
     try {
+        const currentUser = await getCurrentUser();
+        if (!currentUser) return [];
+
+        const householdId = currentUser.householdId || getHouseholdId(currentUser.role, currentUser.uid, currentUser.linkedUserId);
         const members: { uid: string; email: string; role: string; label: string; phoneNumber?: string }[] = [];
 
-        // Helper to fetch from a collection and map
-        const fetchAndMap = async (collectionName: string, role: string) => {
-            const querySnapshot = await getDocs(collection(db, collectionName));
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
+        // 1. Fetch the owner (User collection)
+        const ownerDocRef = doc(db, USERS_COLLECTION, householdId);
+        const ownerDocSnap = await getDoc(ownerDocRef);
+
+        if (ownerDocSnap.exists()) {
+            const data = ownerDocSnap.data();
+            members.push({
+                uid: ownerDocSnap.id,
+                email: data.email,
+                role: 'user',
+                label: data.email.split('@')[0],
+                phoneNumber: data.phoneNumber
+            });
+        }
+
+        // 2. Fetch linked members/cooks
+        const fetchLinkedAndMap = async (collectionName: string, role: string) => {
+            const q = query(collection(db, collectionName), where('linkedUserId', '==', householdId));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach((docSnap) => {
+                const data = docSnap.data();
                 if (data.email) {
                     members.push({
-                        uid: doc.id,
+                        uid: docSnap.id,
                         email: data.email,
                         role: role,
-                        label: data.email.split('@')[0], // Use username as label
+                        label: data.email.split('@')[0],
                         phoneNumber: data.phoneNumber
                     });
                 }
             });
         };
 
-        // Fetch from all 3 collections
-        // Note: In a real app with many households, we would filter by 'linkedUserId' or similar family group ID.
-        // For this single-household/demo app, fetching all is acceptable.
         await Promise.all([
-            fetchAndMap(USERS_COLLECTION, 'user'),
-            fetchAndMap(MEMBERS_COLLECTION, 'member'),
-            fetchAndMap(COOKS_COLLECTION, 'cook')
+            fetchLinkedAndMap(MEMBERS_COLLECTION, 'member'),
+            fetchLinkedAndMap(COOKS_COLLECTION, 'cook')
         ]);
 
         return members;

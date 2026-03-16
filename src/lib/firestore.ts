@@ -1,10 +1,22 @@
 'use server';
 
 import { db } from './firebase';
-import { collection, doc, getDoc, updateDoc, serverTimestamp, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
 
-const MEALS_COLLECTION = 'dailymenu';
+/**
+ * Template collection — the read-only default menu that all new households see.
+ * Admin can edit this via the Admin JSON Editor.
+ */
+const TEMPLATES_COLLECTION = 'menu_templates';
+
+/**
+ * Returns the Firestore collection name for a specific household's meals.
+ * Each household gets its own collection so edits are isolated.
+ */
+function getHouseholdCollection(householdId: string): string {
+    return `meals_${householdId}`;
+}
 
 /**
  * Safely parse a Firestore timestamp into a JS Date.
@@ -40,46 +52,60 @@ function getDayId(dateString: string): string {
 }
 
 /**
- * Get a meal document by date (YYYY-MM-DD)
+ * Parse a raw Firestore document snapshot into a MealDocument.
  */
-export async function getMealByDate(date: string): Promise<MealDocument | null> {
+function parseMealDoc(docSnap: any): MealDocument {
+    const data = docSnap.data();
+    return {
+        id: docSnap.id,
+        ...data,
+        created_at: resolveTimestamp(data.created_at),
+        updated_at: resolveTimestamp(data.updated_at),
+    } as MealDocument;
+}
+
+/**
+ * Try to find a meal doc by dayId in a given collection, with fallback to unpadded ID.
+ */
+async function findDocInCollection(collectionName: string, dayId: string): Promise<MealDocument | null> {
+    const mealRef = doc(db, collectionName, dayId);
+    const mealSnap = await getDoc(mealRef);
+
+    if (mealSnap.exists()) {
+        return parseMealDoc(mealSnap);
+    }
+
+    // Fallback: try the unpadded version (e.g. "1" if padded "01" wasn't found)
+    const unpaddedId = parseInt(dayId, 10).toString();
+    if (unpaddedId !== dayId) {
+        const altRef = doc(db, collectionName, unpaddedId);
+        const altSnap = await getDoc(altRef);
+        if (altSnap.exists()) {
+            return parseMealDoc(altSnap);
+        }
+    }
+
+    return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// READ operations — household first, template fallback
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Get a meal document by date (YYYY-MM-DD) for a specific household.
+ * Tries the household collection first, falls back to the template.
+ */
+export async function getMealByDate(date: string, householdId: string): Promise<MealDocument | null> {
     try {
         const docId = getDayId(date);
-        const mealRef = doc(db, MEALS_COLLECTION, docId);
-        const mealSnap = await getDoc(mealRef);
 
-        if (mealSnap.exists()) {
-            const data = mealSnap.data();
+        // 1. Try household-specific collection
+        const householdMeal = await findDocInCollection(getHouseholdCollection(householdId), docId);
+        if (householdMeal) return householdMeal;
 
-            // Safely handle timestamps — support Firestore Timestamp, plain {seconds} object, and ISO strings
-            const createdAt = resolveTimestamp(data.created_at);
-            const updatedAt = resolveTimestamp(data.updated_at);
-
-            return {
-                id: mealSnap.id,
-                ...data,
-                created_at: createdAt,
-                updated_at: updatedAt,
-            } as MealDocument;
-        }
-
-        // Fallback: try the unpadded version (e.g. "1" if padded "01" wasn't found)
-        const unpaddedId = parseInt(docId, 10).toString();
-        if (unpaddedId !== docId) {
-            const altRef = doc(db, MEALS_COLLECTION, unpaddedId);
-            const altSnap = await getDoc(altRef);
-            if (altSnap.exists()) {
-                const data = altSnap.data();
-                return {
-                    id: altSnap.id,
-                    ...data,
-                    created_at: resolveTimestamp(data.created_at),
-                    updated_at: resolveTimestamp(data.updated_at),
-                } as MealDocument;
-            }
-        }
-
-        return null;
+        // 2. Fallback to master template
+        return await findDocInCollection(TEMPLATES_COLLECTION, docId);
     } catch (error) {
         console.error('Error fetching meal by date:', error);
         return null;
@@ -87,38 +113,81 @@ export async function getMealByDate(date: string): Promise<MealDocument | null> 
 }
 
 /**
- * Get today's meal
+ * Get today's meal for a household
  */
-export async function getTodayMeal(): Promise<MealDocument | null> {
+export async function getTodayMeal(householdId: string): Promise<MealDocument | null> {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    return getMealByDate(today);
+    return getMealByDate(today, householdId);
 }
 
 /**
- * Get tomorrow's meal
+ * Get tomorrow's meal for a household
  */
-export async function getTomorrowMeal(): Promise<MealDocument | null> {
+export async function getTomorrowMeal(householdId: string): Promise<MealDocument | null> {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
-    return getMealByDate(tomorrowDate);
+    return getMealByDate(tomorrowDate, householdId);
 }
 
+// ─────────────────────────────────────────────────────────────
+// COPY-ON-WRITE: Ensure household doc exists before writing
+// ─────────────────────────────────────────────────────────────
+
 /**
- * Update a meal document
+ * Ensure a meal document exists in the household collection.
+ * If it doesn't, copies it from the template collection.
+ * Returns true if the doc exists (or was successfully copied).
+ */
+async function ensureHouseholdDoc(dayId: string, householdId: string): Promise<boolean> {
+    const hhCollection = getHouseholdCollection(householdId);
+    const hhRef = doc(db, hhCollection, dayId);
+    const hhSnap = await getDoc(hhRef);
+
+    if (hhSnap.exists()) return true;
+
+    // Also check unpadded
+    const unpaddedId = parseInt(dayId, 10).toString();
+    if (unpaddedId !== dayId) {
+        const altRef = doc(db, hhCollection, unpaddedId);
+        const altSnap = await getDoc(altRef);
+        if (altSnap.exists()) return true;
+    }
+
+    // Copy from template
+    const templateDoc = await findDocInCollection(TEMPLATES_COLLECTION, dayId);
+    if (!templateDoc) return false; // No template either
+
+    // Write the template data (minus our parsed 'id') into the household collection
+    const { id, created_at, updated_at, ...rest } = templateDoc;
+    await setDoc(hhRef, {
+        ...rest,
+        created_at: serverTimestamp(),
+        updated_at: serverTimestamp(),
+    });
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────
+// WRITE operations — always target the household collection
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Update a meal document in the household collection.
  */
 export async function updateMeal(
-    mealId: string, // This could be the Day ID ('31') or generic ID
-    updates: Partial<MealDocument>
+    mealId: string,
+    updates: Partial<MealDocument>,
+    householdId: string
 ): Promise<boolean> {
     try {
-        // Ensure we are using the correct ID format if a full date was passed by mistake,
-        // though usually the UI passes the ID from the fetched document.
-        // Assuming mealId IS the document ID (e.g. "6" or "31").
         const docId = getDayId(mealId);
-        const mealRef = doc(db, MEALS_COLLECTION, docId);
+        await ensureHouseholdDoc(docId, householdId);
 
-        // Add updated_at timestamp
+        const hhCollection = getHouseholdCollection(householdId);
+        const mealRef = doc(db, hhCollection, docId);
+
         await updateDoc(mealRef, {
             ...updates,
             updated_at: serverTimestamp(),
@@ -132,37 +201,21 @@ export async function updateMeal(
 }
 
 /**
- * Toggle meal attendance for a user (Skip/Eat)
+ * Toggle meal attendance for a user (Skip/Eat) — writes to household collection.
  */
 export async function toggleMealAttendance(
     mealId: string,
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
-    isSkipping: boolean // true if skipping, false if eating (default)
+    isSkipping: boolean,
+    householdId: string
 ): Promise<boolean> {
     try {
         const docId = getDayId(mealId);
-        const mealRef = doc(db, MEALS_COLLECTION, docId);
+        await ensureHouseholdDoc(docId, householdId);
 
-        // We need dot notation to update a specific key in the map without overwriting
-        // e.g. "attendance.USER_ID.breakfast"
-        // correct field path: attendance.{userId}.{mealType}
-        // However, Firestore update with dot notation requires the map to exist?
-        // Actually setDoc with merge: true is safer for deep nested maps if parent keys might not exist,
-        // but updateDoc is fine if 'attendance' field exists or we use dot notation for known paths.
-        // But if attendance map doesn't exist, dot notation "attendance.uid.meal" might fail if "attendance" is missing.
-        // Safer to read content first OR use set with merge.
-        // Let's use getDoc to be safe and simple for now, or just updateDoc with dot notation if we ensure structure.
-
-        // Actually, we can just use `attendance.${userId}.${mealType}` directly? 
-        // If `attendance` field is missing, updateDoc might fail.
-
-        // Let's safe-guard by using setDoc with merge if we are unsure, OR just checking existence.
-        // Let's try reading first to get current state map, modify it, and write back. 
-        // It's less efficient but safer for strictly typed maps.
-
-        // BETTER: Use dot notation which creates parents? No, Firestore update requires top-level field to exist.
-        // Let's just use dot notation and assume we might need to initialize attendance if missing.
+        const hhCollection = getHouseholdCollection(householdId);
+        const mealRef = doc(db, hhCollection, docId);
 
         const mealSnap = await getDoc(mealRef);
         if (!mealSnap.exists()) return false;
@@ -171,13 +224,8 @@ export async function toggleMealAttendance(
         const currentAttendance = data.attendance || {};
         const userAttendance = currentAttendance[userId] || { breakfast: true, lunch: true, dinner: true };
 
-        // Update specific meal
-        // valid 'eating' means value is TRUE. Skipping means FALSE.
-        // input isSkipping: true -> set to false (not eating)
-        // input isSkipping: false -> set to true (eating)
         userAttendance[mealType] = !isSkipping;
 
-        // Update map
         await updateDoc(mealRef, {
             [`attendance.${userId}`]: userAttendance
         });
@@ -190,23 +238,25 @@ export async function toggleMealAttendance(
 }
 
 /**
- * Update meal responsibility assignment
+ * Update meal responsibility assignment — writes to household collection.
  */
 export async function updateMealResponsibility(
     mealId: string,
     slot: 'breakfastLunchId' | 'dinnerId',
-    userId: string | null // null or empty string to unassign
+    userId: string | null,
+    householdId: string
 ): Promise<boolean> {
     try {
         const docId = getDayId(mealId);
-        const mealRef = doc(db, MEALS_COLLECTION, docId);
+        await ensureHouseholdDoc(docId, householdId);
 
-        // Update specific responsibility field using dot notation
-        // responsibility.breakfastLunchId OR responsibility.dinnerId
+        const hhCollection = getHouseholdCollection(householdId);
+        const mealRef = doc(db, hhCollection, docId);
+
         const fieldPath = `responsibility.${slot}`;
 
         await updateDoc(mealRef, {
-            [fieldPath]: userId || null // Store null if unassigning
+            [fieldPath]: userId || null
         });
 
         return true;
@@ -217,23 +267,31 @@ export async function updateMealResponsibility(
 }
 
 /**
- * Bulk update meal responsibility for multiple dates
+ * Bulk update meal responsibility for multiple dates — writes to household collection.
  */
 export async function bulkUpdateMealResponsibility(
-    dates: string[], // Array of "DD" strings or "YYYY-MM-DD"
-    updates: { breakfastLunchId?: string; dinnerId?: string }
+    dates: string[],
+    updates: { breakfastLunchId?: string; dinnerId?: string },
+    householdId: string
 ): Promise<{ success: boolean; updated: number; error?: string }> {
     try {
         if (dates.length === 0) return { success: true, updated: 0 };
+
+        const hhCollection = getHouseholdCollection(householdId);
+
+        // Ensure all household docs exist first (copy-on-write)
+        for (const dateStr of dates) {
+            const docId = getDayId(dateStr);
+            await ensureHouseholdDoc(docId, householdId);
+        }
 
         const batch = writeBatch(db);
         let count = 0;
 
         dates.forEach(dateStr => {
             const docId = getDayId(dateStr);
-            const mealRef = doc(db, MEALS_COLLECTION, docId);
+            const mealRef = doc(db, hhCollection, docId);
 
-            // We need to construct the update object dynamically
             const updateData: any = {};
 
             if (updates.breakfastLunchId !== undefined) {
@@ -245,10 +303,6 @@ export async function bulkUpdateMealResponsibility(
             }
 
             if (Object.keys(updateData).length > 0) {
-                // Use update, but we need to be careful if the document doesn't exist yet.
-                // However, for this app, we assume meal docs exist (created by migration or other flows).
-                // If they might not exist, we should use set with merge, but dot notation implies structure.
-                // Safest to use update since we expect daily menu items.
                 batch.update(mealRef, updateData);
                 count++;
             }
@@ -263,30 +317,37 @@ export async function bulkUpdateMealResponsibility(
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// GET ALL — merges household overrides with template defaults
+// ─────────────────────────────────────────────────────────────
+
 /**
- * Get all meals from the collection
+ * Get all meals — merges household collection with template fallbacks.
+ * Days that exist in the household collection use that data;
+ * Days only in the template use the template data.
  */
-export async function getAllMeals(): Promise<MealDocument[]> {
+export async function getAllMeals(householdId: string): Promise<MealDocument[]> {
     try {
-        const mealsRef = collection(db, MEALS_COLLECTION);
-        const querySnapshot = await getDocs(mealsRef);
+        // 1. Load all templates
+        const templatesRef = collection(db, TEMPLATES_COLLECTION);
+        const templateSnapshot = await getDocs(templatesRef);
+        const templateMap = new Map<string, MealDocument>();
 
-        const meals: MealDocument[] = [];
-        querySnapshot.forEach((doc) => {
-            const data = doc.data();
-
-            const createdAt = resolveTimestamp(data.created_at);
-            const updatedAt = resolveTimestamp(data.updated_at);
-
-            meals.push({
-                id: doc.id,
-                ...data,
-                created_at: createdAt,
-                updated_at: updatedAt,
-            } as MealDocument);
+        templateSnapshot.forEach((docSnap) => {
+            templateMap.set(docSnap.id, parseMealDoc(docSnap));
         });
 
-        return meals;
+        // 2. Load household overrides
+        const hhCollection = getHouseholdCollection(householdId);
+        const hhRef = collection(db, hhCollection);
+        const hhSnapshot = await getDocs(hhRef);
+
+        hhSnapshot.forEach((docSnap) => {
+            // Override template entry with household data
+            templateMap.set(docSnap.id, parseMealDoc(docSnap));
+        });
+
+        return Array.from(templateMap.values());
     } catch (error) {
         console.error('Error fetching all meals:', error);
         return [];
@@ -294,18 +355,42 @@ export async function getAllMeals(): Promise<MealDocument[]> {
 }
 
 /**
- * Update all meal dates to the current month AND migrate IDs to Day format
- * Preserves the day of month and shifts to current month/year
- * Migrates "YYYY-MM-DD" IDs to "D" IDs
+ * Get all template meals (admin-only, for the template editor).
+ */
+export async function getAllTemplateMeals(): Promise<MealDocument[]> {
+    try {
+        const templatesRef = collection(db, TEMPLATES_COLLECTION);
+        const querySnapshot = await getDocs(templatesRef);
+
+        const meals: MealDocument[] = [];
+        querySnapshot.forEach((docSnap) => {
+            meals.push(parseMealDoc(docSnap));
+        });
+
+        return meals;
+    } catch (error) {
+        console.error('Error fetching template meals:', error);
+        return [];
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN: Update template dates to current month
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Update all meal dates to the current month AND migrate IDs to Day format.
+ * Operates on the TEMPLATE collection only (admin function).
  */
 export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolean; updated: number; error?: string }> {
     try {
-        console.log('Starting meal date update and ID migration...');
-        const meals = await getAllMeals();
-        console.log(`Found ${meals.length} meals to update`);
+        console.log('Starting template date update and ID migration...');
+        const meals = await getAllTemplateMeals();
+        console.log(`Found ${meals.length} template meals to update`);
 
         if (meals.length === 0) {
-            return { success: false, updated: 0, error: 'No meals found in database' };
+            return { success: false, updated: 0, error: 'No meals found in template database' };
         }
 
         const batch = writeBatch(db);
@@ -317,32 +402,22 @@ export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolea
 
         for (const meal of meals) {
             try {
-                // Parse the original date from the document data
-                // Assuming 'date' field exists and is "YYYY-MM-DD"
                 const oldDateString = meal.date;
                 const oldDate = new Date(oldDateString + 'T00:00:00');
-
-                // Get the day of the month (1-31)
                 const dayOfMonth = oldDate.getDate();
 
-                // Create new date object for CURRENT month
                 const newDate = new Date(currentYear, currentMonth, dayOfMonth);
-                const newDateString = newDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
-                // Determine new Document ID: zero-padded 2-digit day (e.g. "01", "22")
+                const newDateString = newDate.toISOString().split('T')[0];
                 const newDocId = dayOfMonth.toString().padStart(2, '0');
 
                 console.log(`Migrating/Updating: ${meal.id} -> DocID: ${newDocId} (Date: ${newDateString})`);
 
-                // Get day of week for the new date
                 const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
                 const newDayOfWeek = daysOfWeek[newDate.getDay()];
 
-                // Prepare references
-                const oldRef = doc(db, MEALS_COLLECTION, meal.id);
-                const newRef = doc(db, MEALS_COLLECTION, newDocId);
+                const oldRef = doc(db, TEMPLATES_COLLECTION, meal.id);
+                const newRef = doc(db, TEMPLATES_COLLECTION, newDocId);
 
-                // Prepare clean data
                 const cleanData: any = {};
                 for (const [key, value] of Object.entries(meal)) {
                     if (key !== 'id' && key !== 'created_at' && key !== 'updated_at') {
@@ -350,27 +425,21 @@ export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolea
                     }
                 }
 
-                // Update fields
                 cleanData.date = newDateString;
                 cleanData.day_of_week = newDayOfWeek;
                 cleanData.updated_at = serverTimestamp();
                 cleanData.created_at = meal.created_at || serverTimestamp();
 
-                // Logic:
-                // 1. If old ID == new ID, just update (e.g. already migrated, just rolling over month)
-                // 2. If old ID != new ID (e.g. "2026-01-31" vs "31"), delete old, create new.
-
                 if (meal.id === newDocId) {
-                    batch.update(newRef, cleanData); // Just update fields
+                    batch.update(newRef, cleanData);
                 } else {
-                    batch.delete(oldRef); // Delete old ID doc
-                    batch.set(newRef, cleanData); // Create new ID doc
+                    batch.delete(oldRef);
+                    batch.set(newRef, cleanData);
                 }
 
                 updatedCount++;
             } catch (itemError: any) {
                 console.error(`Error processing meal ${meal.id}:`, itemError);
-                // Continue with other meals
             }
         }
 
@@ -385,43 +454,96 @@ export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolea
     }
 }
 
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN: Copy dailymenu → menu_templates (one-time migration)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Copy all documents from the old 'dailymenu' collection to 'menu_templates'.
+ * This is a one-time migration script for admins.
+ */
+export async function copyDailyMenuToTemplates(): Promise<{ success: boolean; copied: number; error?: string }> {
+    try {
+        const SOURCE = 'dailymenu';
+
+        const sourceRef = collection(db, SOURCE);
+        const sourceSnapshot = await getDocs(sourceRef);
+
+        if (sourceSnapshot.empty) {
+            return { success: false, copied: 0, error: 'No documents found in dailymenu collection' };
+        }
+
+        const batch = writeBatch(db);
+        let count = 0;
+
+        sourceSnapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const targetRef = doc(db, TEMPLATES_COLLECTION, docSnap.id);
+            batch.set(targetRef, data);
+            count++;
+        });
+
+        await batch.commit();
+        console.log(`Copied ${count} documents from ${SOURCE} to ${TEMPLATES_COLLECTION}`);
+
+        return { success: true, copied: count };
+    } catch (error: any) {
+        console.error('Error copying dailymenu to templates:', error);
+        return { success: false, copied: 0, error: error.message || 'Unknown error' };
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// USER MEALS — reads from household collection (with template fallback)
+// ─────────────────────────────────────────────────────────────
+
 /**
  * Get meals for a specific user (Assigned to Cook OR Attending)
  */
-export async function getUserMeals(userId: string): Promise<{
+export async function getUserMeals(userId: string, householdId: string): Promise<{
     assigned: { date: string; mealType: string; meal: MealItem }[];
     attending: { date: string; mealType: string; meal: MealItem }[];
 }> {
     try {
-        const allMeals = await getAllMeals();
+        const allMeals = await getAllMeals(householdId);
         const assigned: { date: string; mealType: string; meal: MealItem }[] = [];
         const attending: { date: string; mealType: string; meal: MealItem }[] = [];
 
+        const today = new Date();
+        const currentYear = today.getFullYear();
+        const currentMonth = today.getMonth() + 1; // 1-12
+
         allMeals.forEach(doc => {
+            // Synthesize the correct date for the current month using the doc.id (which is 01..31)
+            const dayNum = parseInt(doc.id, 10);
+            let realDateStr = doc.date;
+
+            if (!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
+                realDateStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+            }
+
             // Check Responsibility
             if (doc.responsibility?.breakfastLunchId === userId) {
-                if (doc.breakfast) assigned.push({ date: doc.date, mealType: 'Breakfast', meal: doc.breakfast });
-                if (doc.lunch) assigned.push({ date: doc.date, mealType: 'Lunch', meal: doc.lunch });
+                if (doc.breakfast) assigned.push({ date: realDateStr, mealType: 'Breakfast', meal: doc.breakfast });
+                if (doc.lunch) assigned.push({ date: realDateStr, mealType: 'Lunch', meal: doc.lunch });
             }
             if (doc.responsibility?.dinnerId === userId) {
-                if (doc.dinner) assigned.push({ date: doc.date, mealType: 'Dinner', meal: doc.dinner });
+                if (doc.dinner) assigned.push({ date: realDateStr, mealType: 'Dinner', meal: doc.dinner });
             }
 
             // Check Attendance
-            // If user record exists in attendance map
             const userAttendance = doc.attendance?.[userId];
             if (userAttendance) {
-                if (userAttendance.breakfast && doc.breakfast) attending.push({ date: doc.date, mealType: 'Breakfast', meal: doc.breakfast });
-                if (userAttendance.lunch && doc.lunch) attending.push({ date: doc.date, mealType: 'Lunch', meal: doc.lunch });
-                if (userAttendance.dinner && doc.dinner) attending.push({ date: doc.date, mealType: 'Dinner', meal: doc.dinner });
+                if (userAttendance.breakfast && doc.breakfast) attending.push({ date: realDateStr, mealType: 'Breakfast', meal: doc.breakfast });
+                if (userAttendance.lunch && doc.lunch) attending.push({ date: realDateStr, mealType: 'Lunch', meal: doc.lunch });
+                if (userAttendance.dinner && doc.dinner) attending.push({ date: realDateStr, mealType: 'Dinner', meal: doc.dinner });
             } else {
-                // Default: If no record, assume eating? Or assume not?
-                // In MealCard we assumed "eating" if record doesn't exist.
-                // But for "My Plates" list, maybe only show explicit or default "eating".
-                // Let's stick to: If record undefined => Eating (default).
-                if (doc.breakfast) attending.push({ date: doc.date, mealType: 'Breakfast', meal: doc.breakfast });
-                if (doc.lunch) attending.push({ date: doc.date, mealType: 'Lunch', meal: doc.lunch });
-                if (doc.dinner) attending.push({ date: doc.date, mealType: 'Dinner', meal: doc.dinner });
+                // Default: If no record, assume eating
+                if (doc.breakfast) attending.push({ date: realDateStr, mealType: 'Breakfast', meal: doc.breakfast });
+                if (doc.lunch) attending.push({ date: realDateStr, mealType: 'Lunch', meal: doc.lunch });
+                if (doc.dinner) attending.push({ date: realDateStr, mealType: 'Dinner', meal: doc.dinner });
             }
         });
 
@@ -430,8 +552,7 @@ export async function getUserMeals(userId: string): Promise<{
         assigned.sort(sortFn);
         attending.sort(sortFn);
 
-        // Filter out past cooking duties (assigned)
-        // We keep today and future
+        // Filter out past cooking duties
         const todayStr = new Date().toISOString().split('T')[0];
         const futureAssigned = assigned.filter(item => item.date >= todayStr);
 

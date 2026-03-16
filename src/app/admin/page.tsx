@@ -258,6 +258,38 @@ export default function AdminPage() {
                     <p className="mt-4 text-xs text-gray-500 text-center">
                         {t('admin.updateDatesWarning')}
                     </p>
+
+                    <hr className="my-6 border-gray-200" />
+
+                    <h3 className="font-bold text-gray-800 mb-2">Migration: Copy Daily Menu to Templates</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                        Perform a one-time copy of all existing <code>dailymenu</code> data to the new <code>menu_templates</code> collection. This is required for the new household-scoped architecture.
+                    </p>
+                    <button
+                        onClick={async () => {
+                            if (!confirm('Are you sure you want to copy dailymenu to menu_templates? This will overwrite existing templates with the same day IDs.')) return;
+                            setMealUpdateLoading(true);
+                            setMealUpdateError('');
+                            setMealUpdateSuccess('');
+                            try {
+                                const { copyDailyMenuToTemplates } = await import('@/lib/firestore');
+                                const result = await copyDailyMenuToTemplates();
+                                if (result.success) {
+                                    setMealUpdateSuccess(`✅ Successfully copied ${result.copied} meals to templates!`);
+                                } else {
+                                    setMealUpdateError(result.error || 'Failed to copy templates');
+                                }
+                            } catch (e: any) {
+                                setMealUpdateError(e.message || 'Failed to copy templates');
+                            } finally {
+                                setMealUpdateLoading(false);
+                            }
+                        }}
+                        disabled={mealUpdateLoading}
+                        className="w-full bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
+                    >
+                        {mealUpdateLoading ? 'Copying...' : 'Copy Daily Menu to Templates'}
+                    </button>
                 </div>
 
                 {/* Responsibility Assignment Section */}
@@ -275,6 +307,7 @@ export default function AdminPage() {
                         selectedDates={selectedDates}
                         members={members}
                         onSuccess={() => { }}
+                        householdId={user?.uid || ''}
                     />
                 </div>
 
