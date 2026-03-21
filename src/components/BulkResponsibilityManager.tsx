@@ -49,9 +49,18 @@ export default function BulkResponsibilityManager({
         try {
             const dateStrings = selectedDates.map(d => format(d, 'yyyy-MM-dd'));
 
-            const updates: { breakfastLunchId?: string; dinnerId?: string } = {};
-            if (brunchUser) updates.breakfastLunchId = brunchUser;
-            if (dinnerUser) updates.dinnerId = dinnerUser;
+            const updates: { breakfastLunchId?: string | null; dinnerId?: string | null } = {};
+            if (brunchUser === 'unassigned') {
+                updates.breakfastLunchId = null;
+            } else if (brunchUser) {
+                updates.breakfastLunchId = brunchUser;
+            }
+
+            if (dinnerUser === 'unassigned') {
+                updates.dinnerId = null;
+            } else if (dinnerUser) {
+                updates.dinnerId = dinnerUser;
+            }
 
             const result = await bulkUpdateMealResponsibility(dateStrings, updates, householdId);
 
@@ -105,6 +114,7 @@ export default function BulkResponsibilityManager({
                             className="w-full appearance-none bg-brand-light/5 border border-brand-light/30 rounded-xl py-3 pl-4 pr-10 text-sm font-medium text-brand-darkest focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all cursor-pointer hover:border-brand-primary/40 focus:bg-white"
                         >
                             <option value="">{t('bulk.noChange')}</option>
+                            <option value="unassigned">-- Unassigned --</option>
                             {members.map(member => (
                                 <option key={member.uid} value={member.uid}>
                                     {member.label}
@@ -130,6 +140,7 @@ export default function BulkResponsibilityManager({
                             className="w-full appearance-none bg-brand-light/5 border border-brand-light/30 rounded-xl py-3 pl-4 pr-10 text-sm font-medium text-brand-darkest focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all cursor-pointer hover:border-brand-primary/40 focus:bg-white"
                         >
                             <option value="">{t('bulk.noChange')}</option>
+                            <option value="unassigned">-- Unassigned --</option>
                             {members.map(member => (
                                 <option key={member.uid} value={member.uid}>
                                     {member.label}

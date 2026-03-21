@@ -168,7 +168,20 @@ async function ensureHouseholdDoc(docId: string, householdId: string): Promise<b
         if (!fallbackDoc) fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, parseInt(docId, 10).toString());
     }
 
-    if (!fallbackDoc) return false;
+    if (!fallbackDoc) {
+        // If there's no template, create an empty one so it doesn't crash on updates!
+        fallbackDoc = {
+            id: docId,
+            date: isFullDate ? docId : "unknown",
+            day_of_week: "Unknown",
+            created_at: serverTimestamp(),
+            updated_at: serverTimestamp(),
+            total_calories: 0,
+            breakfast: { item_name: 'Not Set', calories: 0, image_url: '', is_vegetarian: false },
+            lunch: { item_name: 'Not Set', calories: 0, image_url: '', is_vegetarian: false },
+            dinner: { item_name: 'Not Set', calories: 0, image_url: '', is_vegetarian: false },
+        };
+    }
 
     const { id, created_at, updated_at, ...rest } = fallbackDoc;
     await setDoc(hhRef, {
@@ -302,7 +315,7 @@ export async function updateMealResponsibility(
  */
 export async function bulkUpdateMealResponsibility(
     dates: string[],
-    updates: { breakfastLunchId?: string; dinnerId?: string },
+    updates: { breakfastLunchId?: string | null; dinnerId?: string | null },
     householdId: string
 ): Promise<{ success: boolean; updated: number; error?: string }> {
     try {
@@ -323,18 +336,18 @@ export async function bulkUpdateMealResponsibility(
             const docId = dateStr; // Specific date
             const mealRef = doc(db, hhCollection, docId);
 
-            const updateData: any = {};
+            const updateNested: any = { responsibility: {} };
 
             if (updates.breakfastLunchId !== undefined) {
-                updateData['responsibility.breakfastLunchId'] = updates.breakfastLunchId || null;
+                updateNested.responsibility.breakfastLunchId = updates.breakfastLunchId;
             }
 
             if (updates.dinnerId !== undefined) {
-                updateData['responsibility.dinnerId'] = updates.dinnerId || null;
+                updateNested.responsibility.dinnerId = updates.dinnerId;
             }
 
-            if (Object.keys(updateData).length > 0) {
-                batch.update(mealRef, updateData);
+            if (Object.keys(updateNested.responsibility).length > 0) {
+                batch.set(mealRef, updateNested, { merge: true });
                 count++;
             }
         });

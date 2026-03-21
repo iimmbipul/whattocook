@@ -1,8 +1,7 @@
 'use client';
 
 import { MealItem, MealItemTranslation } from '@/types/meal';
-import { updateMeal, updateMealResponsibility } from '@/lib/firestore';
-import { getCurrentUser } from '@/lib/auth';
+import { updateMeal } from '@/lib/firestore';
 import { useState, useRef } from 'react';
 import { X, Utensils, Clock, Flame, Link as LinkIcon, Image as ImageIcon, CheckCircle, ShoppingCart, Sparkles } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
@@ -140,17 +139,7 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
             } as any, householdId, applyToAllMonths);
 
             if (success) {
-                try {
-                    const currentUser = await getCurrentUser();
-                    if (currentUser) {
-                        const slot = (mealType === 'breakfast' || mealType === 'lunch')
-                            ? 'breakfastLunchId'
-                            : 'dinnerId';
-                        await updateMealResponsibility(mealId, slot, currentUser.uid, householdId);
-                    }
-                } catch (respError) {
-                    console.error('Failed to auto-assign responsibility:', respError);
-                }
+
 
                 if (onRefresh) onRefresh();
                 setShowSuccess(true);
