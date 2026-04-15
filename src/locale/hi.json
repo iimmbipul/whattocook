@@ -6,20 +6,19 @@
         "myPlates": "मेरी थाली",
         "logout": "लॉग आउट",
         "adminSettings": "एडमिन सेटिंग्स",
-        "selectLanguage": "भाषा"
+        "selectLanguage": "भाषा",
+        "profile": "प्रोफ़ाइल"
     },
     "login": {
         "title": "मील प्लानर",
-        "subtitle": "अपने खाने को मैनेज करने के लिए साइन इन करें",
-        "emailLabel": "ईमेल पता",
-        "passwordLabel": "पासवर्ड",
-        "emailPlaceholder": "you@example.com",
-        "passwordPlaceholder": "••••••••",
-        "submitButton": "साइन इन",
-        "loadingButton": "साइन इन हो रहा है...",
-        "invalidCredentials": "ईमेल या पासवर्ड गलत है। कृपया पुनः प्रयास करें।",
-        "footer": "लॉगिन के लिए अपना ईमेल और पासवर्ड उपयोग करें",
-        "footerHint": "पहली बार? /admin पर अपना अकाउंट बनाने के लिए एडमिन से पूछें"
+        "subtitle": "अपने Google खाते से साइन इन करें",
+        "googleButton": "Google से साइन इन करें",
+        "googleLoading": "साइन इन हो रहा है...",
+        "googleFooter": "केवल पंजीकृत सदस्य ही साइन इन कर सकते हैं",
+        "footerHint": "पहली बार? /admin पर एडमिन से अपना ईमेल जुड़वाएं",
+        "googleNoEmail": "Google ईमेल प्राप्त नहीं हो सका। कृपया पुनः प्रयास करें।",
+        "googleNotRegistered": "आपका Google खाता पंजीकृत नहीं है। एडमिन से अपना ईमेल जुड़वाएं।",
+        "googleError": "साइन इन विफल हुआ। कृपया पुनः प्रयास करें।"
     },
     "dashboard": {
         "loading": "लोड हो रहा है...",
@@ -98,6 +97,7 @@
         "selectCollection": "कलेक्शन चुनें",
         "dailyMenuOption": "दैनिक मेनू (भोजन)",
         "usersOption": "उपयोगकर्ता",
+        "categoryTemplatesOption": "कलेक्शन टेम्पलेट्स (AI मेनू)",
         "loadingPlaceholder": "डेटा लोड हो रहा है...",
         "refreshButton": "🔄 डेटा रिफ्रेश करें",
         "updateButton": "💾 डेटाबेस अपडेट करें",

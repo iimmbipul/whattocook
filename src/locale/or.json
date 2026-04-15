@@ -6,20 +6,19 @@
         "myPlates": "ମୋ ଥାଳି",
         "logout": "ଲଗ୍ ଆଉଟ୍",
         "adminSettings": "ଆଡ୍ମିନ ସେଟିଂସ୍",
-        "selectLanguage": "ଭାଷା"
+        "selectLanguage": "ଭାଷା",
+        "profile": "ପ୍ରୋଫାଇଲ୍"
     },
     "login": {
         "title": "ମିଲ୍ ପ୍ଲାନ୍ନର",
-        "subtitle": "ଆପଣଙ୍କ ଖାଦ୍ୟ ପରିଚାଳନା ପାଇଁ ସାଇନ୍ ଇନ୍ କରନ୍ତୁ",
-        "emailLabel": "ଇମେଲ୍ ଠିକଣା",
-        "passwordLabel": "ପାସୱାର୍ଡ",
-        "emailPlaceholder": "you@example.com",
-        "passwordPlaceholder": "••••••••",
-        "submitButton": "ସାଇନ୍ ଇନ୍",
-        "loadingButton": "ସାଇନ୍ ଇନ୍ ହେଉଛି...",
-        "invalidCredentials": "ଇମେଲ୍ ବା ପାସୱାର୍ଡ ଭୁଲ। ଦୟାକରି ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ।",
-        "footer": "ଲଗ୍ ଇନ୍ ପାଇଁ ଆପଣଙ୍କ ଇମେଲ୍ ଓ ପାସୱାର୍ଡ ବ୍ୟବହାର କରନ୍ତୁ",
-        "footerHint": "ପ୍ରଥମ ଥର? /admin ରେ ଆକାଉଣ୍ଟ ତିଆରି ପାଇଁ ଆଡ୍ମିନ୍‌ଙ୍କୁ ପଚାରନ୍ତୁ"
+        "subtitle": "ଆପଣଙ୍କ Google ଖାତାରୁ ସାଇନ୍ ଇନ୍ କରନ୍ତୁ",
+        "googleButton": "Google ସାହାଯ୍ୟରେ ସାଇନ୍ ଇନ୍ କରନ୍ତୁ",
+        "googleLoading": "ସାଇନ୍ ଇନ୍ ହେଉଛି...",
+        "googleFooter": "କେଵଳ ପଞ୍ଜୀକୃତ ସଦସ୍ୟ ସାଇନ୍ ଇନ୍ କରିପାରିବେ",
+        "footerHint": "ପ୍ରଥମ ଥର? /admin ରେ ଆଡ୍ମିନ୍‌ଙ୍କୁ ଆପଣଙ୍କ ଇମେଲ୍ ଯୋଗ କରିଦେବା ପାଇ஁ ପଚାରନ୍ତୁ",
+        "googleNoEmail": "Google ଇମେଲ୍ ମିଳିଲା ନାହିଁ। ଦୟାକରି ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ।",
+        "googleNotRegistered": "ଆପଣଙ୍କ Google ଖାତା ପଞ୍ଜୀକୃତ ନୁହଁ। ଆଡ୍ମିନ୍‌ଙ୍କୁ ଆପଣଙ୍କ ଇମେଲ୍ ଯୋଗ କରିଦେବା ପାଇ஁ ପଚାରନ୍ତୁ।",
+        "googleError": "ସାଇନ୍ ଇନ୍ ବିଫଳ ହେଲା। ଦୟାକରି ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ।"
     },
     "dashboard": {
         "loading": "ଲୋଡ ହେଉଛି...",
@@ -98,6 +97,7 @@
         "selectCollection": "ସଂଗ୍ରହ ଚୟନ କରନ୍ତୁ",
         "dailyMenuOption": "ଦୈନିକ ମେନୁ (ଖାଦ୍ୟ)",
         "usersOption": "ଉପଭୋକ୍ତା",
+        "categoryTemplatesOption": "ବର୍ଗ ଟେମ୍ପଲେଟ୍ (AI ମେନୁ)",
         "loadingPlaceholder": "ଡେଟା ଲୋଡ ହେଉଛି...",
         "refreshButton": "🔄 ଡେଟା ରିଫ୍ରେଶ କରନ୍ତୁ",
         "updateButton": "💾 ଡେଟାବେସ ଅଦ୍ୟତନ କରନ୍ତୁ",

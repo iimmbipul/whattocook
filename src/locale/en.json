@@ -6,20 +6,19 @@
         "myPlates": "My Plates",
         "logout": "Logout",
         "adminSettings": "Admin Settings",
-        "selectLanguage": "Language"
+        "selectLanguage": "Language",
+        "profile": "Profile"
     },
     "login": {
         "title": "Meal Planner",
-        "subtitle": "Sign in to manage your meals",
-        "emailLabel": "Email Address",
-        "passwordLabel": "Password",
-        "emailPlaceholder": "you@example.com",
-        "passwordPlaceholder": "••••••••",
-        "submitButton": "Sign In",
-        "loadingButton": "Signing in...",
-        "invalidCredentials": "Invalid email or password. Please try again.",
-        "footer": "Use your email and password to login",
-        "footerHint": "First time? Ask admin to create your account at /admin"
+        "subtitle": "Sign in with your Google account",
+        "googleButton": "Sign in with Google",
+        "googleLoading": "Signing in...",
+        "googleFooter": "Only registered household members can sign in",
+        "footerHint": "First time? Ask admin to add your email at /admin",
+        "googleNoEmail": "Could not retrieve your Google email. Please try again.",
+        "googleNotRegistered": "Sign-in error. Could not authenticate or create a new account.",
+        "googleError": "Sign-in failed. Please try again."
     },
     "dashboard": {
         "loading": "Loading...",
@@ -98,6 +97,7 @@
         "selectCollection": "Select Collection",
         "dailyMenuOption": "Daily Menu (Meals)",
         "usersOption": "Users",
+        "categoryTemplatesOption": "Category Templates (AI Menus)",
         "loadingPlaceholder": "Loading specific data...",
         "refreshButton": "🔄 Refresh Data",
         "updateButton": "💾 Update Database",
