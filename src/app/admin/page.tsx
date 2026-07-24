@@ -171,7 +171,7 @@ export default function AdminPage() {
                                         value={formData.email}
                                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                        required={formData.role !== 'cook'}
+                                        required
                                         placeholder="user@example.com"
                                     />
                                 </div>
@@ -185,7 +185,7 @@ export default function AdminPage() {
                                         value={formData.password}
                                         onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                        required={formData.role !== 'cook'}
+                                        required
                                         placeholder={t('admin.passwordPlaceholder')}
                                         minLength={6}
                                     />
