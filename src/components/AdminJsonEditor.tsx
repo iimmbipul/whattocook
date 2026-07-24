@@ -5,7 +5,7 @@ import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, writeBatch } from 'firebase/firestore';
 import { useLocale } from '@/context/LocaleContext';
 
-type CollectionName = 'menu_templates' | 'users';
+type CollectionName = 'menu_templates' | 'users' | 'category_templates' | 'meals_T6GggZ7CrPSSoY9uEydL' | 'households/T6GggZ7CrPSSoY9uEydL/meals';
 
 export default function AdminJsonEditor() {
     const [selectedCollection, setSelectedCollection] = useState<CollectionName>('menu_templates');
@@ -140,6 +140,9 @@ export default function AdminJsonEditor() {
                 >
                     <option value="menu_templates">{t('adminEditor.dailyMenuOption')}</option>
                     <option value="users">{t('adminEditor.usersOption')}</option>
+                    <option value="category_templates">{t('adminEditor.categoryTemplatesOption')}</option>
+                    <option value="meals_T6GggZ7CrPSSoY9uEydL">meals_T6GggZ7CrPSSoY9uEydL</option>
+                    <option value="households/T6GggZ7CrPSSoY9uEydL/meals">households/T6GggZ7CrPSSoY9uEydL/meals</option>
                 </select>
             </div>
 

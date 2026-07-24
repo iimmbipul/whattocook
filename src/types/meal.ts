@@ -51,9 +51,14 @@ export interface MealDocument {
 export interface User {
   uid: string;
   email: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
   role: UserRole;
   phoneNumber: string;
   linkedUserId?: string;
   /** Household ID: owner's uid for owners, linkedUserId for members/cooks */
   householdId: string;
+  houseCode?: string;
+  housePin?: string;
+  dietCategory?: string;
 }

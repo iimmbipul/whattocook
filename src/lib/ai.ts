@@ -125,3 +125,58 @@ export async function fetchAlternativeMeals(
         return [];
     }
 }
+
+const monthlyPlanSchema = z.object({
+    days: z.array(z.object({
+        day: z.number(),
+        breakfast_name: z.string(),
+        lunch_name: z.string(),
+        dinner_name: z.string(),
+        breakfast_cal: z.number(),
+        lunch_cal: z.number(),
+        dinner_cal: z.number()
+    }))
+});
+
+export type MonthlyPlanDay = z.infer<typeof monthlyPlanSchema>['days'][0];
+
+export async function generate30DayPlan(category: string): Promise<MonthlyPlanDay[]> {
+    try {
+        const groq = getGroqProvider();
+        
+        const { text } = await generateText({
+            model: groq('llama-3.3-70b-versatile'),
+            system: `You are an expert nutritionist. Create a 30-day meal plan specifically for a ${category} diet. 
+            Keep meal names descriptive but concise (max 5 words). 
+            Provide estimated reasonable calories for each meal.
+            
+            CRITICAL INSTRUCTION: Your output MUST be ONLY valid JSON matching exactly this TypeScript interface:
+            {
+              "days": [
+                {
+                  "day": 1, // 1 to 30
+                  "breakfast_name": "string",
+                  "lunch_name": "string",
+                  "dinner_name": "string",
+                  "breakfast_cal": number,
+                  "lunch_cal": number,
+                  "dinner_cal": number
+                }
+              ]
+            }
+            Do NOT include any markdown formatting, markdown backticks, explanations, or extra text. Output RAW JSON only. Must include exactly 30 items in the days array.`,
+            prompt: `Generate a 30-day ${category} meal plan.`,
+            temperature: 0.5,
+        });
+
+        const cleanedText = text.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
+        const parsed = JSON.parse(cleanedText);
+        
+        const result = monthlyPlanSchema.parse(parsed);
+        return result.days;
+    } catch (error) {
+        console.error("Error generating 30-day plan with Groq:", error);
+        return [];
+    }
+}
+

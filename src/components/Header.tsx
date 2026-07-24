@@ -2,9 +2,11 @@
 
 import { useAuth } from './AuthProvider';
 import { logout } from '@/lib/auth';
+import { auth } from '@/lib/firebase';
+import { signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
-import { Settings, LogOut, UtensilsCrossed, ChevronDown } from 'lucide-react';
+import { Settings, LogOut, UtensilsCrossed, ChevronDown, User as UserIcon } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { supportedLocales, localeLabels, type SupportedLocale } from '@/lib/i18n';
 
@@ -28,6 +30,7 @@ export default function Header() {
 
     const handleLogout = async () => {
         await logout();
+        await signOut(auth).catch(() => {}); // Clear Firebase/Google auth session
         localStorage.removeItem('meal_planner_user');
         router.push('/login');
     };
@@ -97,16 +100,49 @@ export default function Header() {
                             >
                                 <div className="text-right hidden sm:block">
                                     <div className="text-xs text-brand-secondary font-bold uppercase tracking-wider">{t('header.welcome')}</div>
-                                    <div className="text-sm font-bold text-brand-light">{user.email?.split('@')[0]}</div>
+                                    <div className="text-sm font-bold text-brand-light">{user.displayName?.split(' ')[0] || user.email?.split('@')[0]}</div>
                                 </div>
-                                <div className="w-8 h-8 bg-brand-secondary text-brand-darkest rounded-full flex items-center justify-center font-bold shadow-sm">
-                                    {user.email?.charAt(0).toUpperCase()}
+                                <div className="w-8 h-8 bg-brand-secondary text-brand-darkest rounded-full flex items-center justify-center font-bold shadow-sm overflow-hidden border border-brand-secondary/50">
+                                    {user.photoURL ? (
+                                        <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                                    ) : (
+                                        user.displayName?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase()
+                                    )}
                                 </div>
                             </button>
 
                             {/* Dropdown Menu */}
-                            <div className={`absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden transition-all transform origin-top-right z-50 ${isProfileOpen ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}`}>
+                            <div className={`absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden transition-all transform origin-top-right z-50 ${isProfileOpen ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}`}>
                                 <div className="p-2 space-y-1">
+                                    {user.houseCode && user.housePin && (
+                                        <>
+                                            <div className="px-3 py-2 text-xs">
+                                                <div className="text-gray-500 font-semibold mb-1 uppercase tracking-wider">Your Team Setup</div>
+                                                <div className="flex justify-between items-center bg-gray-50 p-1.5 rounded-md mb-1">
+                                                    <span className="text-gray-500">ID:</span>
+                                                    <span className="font-mono font-bold text-indigo-600">{user.houseCode}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center bg-gray-50 p-1.5 rounded-md">
+                                                    <span className="text-gray-500">PIN:</span>
+                                                    <span className="font-mono font-bold text-indigo-600">{user.housePin}</span>
+                                                </div>
+                                            </div>
+                                            <div className="h-px bg-brand-light/20 my-1" />
+                                        </>
+                                    )}
+                                    <button
+                                        onClick={() => {
+                                            setIsProfileOpen(false);
+                                            router.push('/profile');
+                                        }}
+                                        className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-brand-light/20 rounded-lg transition-colors"
+                                    >
+                                        <UserIcon size={16} />
+                                        <span>{t('header.profile') || 'Profile'}</span>
+                                    </button>
+
+                                    <div className="h-px bg-brand-light/20 my-1" />
+
                                     <button
                                         onClick={() => {
                                             setIsProfileOpen(false);
@@ -117,7 +153,7 @@ export default function Header() {
                                         <UtensilsCrossed size={16} />
                                         <span>{t('header.myPlates')}</span>
                                     </button>
-
+                                    
                                     <div className="h-px bg-brand-light/20 my-1" />
 
                                     <button

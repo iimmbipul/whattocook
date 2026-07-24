@@ -15,7 +15,7 @@ const TEMPLATES_COLLECTION = 'menu_templates';
  * Each household gets its own collection so edits are isolated.
  */
 function getHouseholdCollection(householdId: string): string {
-    return `meals_${householdId}`;
+    return `households/${householdId}/meals`;
 }
 
 /**

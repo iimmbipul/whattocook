@@ -1,6 +1,6 @@
 /**
- * Client-side Google Translate utility.
- * Calls our internal /api/translate route (which keeps the API key server-side).
+ * Client-side translation utility.
+ * Calls our internal /api/translate route (which uses Groq server-side).
  *
  * Features:
  * - In-memory cache to avoid duplicate API calls within a session

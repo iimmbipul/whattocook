@@ -143,38 +143,6 @@ export default function AdminPage() {
 
                     <form onSubmit={handleSubmit} className="space-y-6">
                         <div>
-                            <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-2">
-                                {t('admin.emailLabel')} <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                id="email"
-                                type="email"
-                                value={formData.email}
-                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                required
-                                placeholder="user@example.com"
-                            />
-                        </div>
-
-                        <div>
-                            <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-2">
-                                {t('admin.passwordLabel')} <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                id="password"
-                                type="password"
-                                value={formData.password}
-                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                required
-                                placeholder={t('admin.passwordPlaceholder')}
-                                minLength={6}
-                            />
-                            <p className="mt-1 text-sm text-gray-500">{t('admin.passwordHint')}</p>
-                        </div>
-
-                        <div>
                             <label htmlFor="role" className="block text-sm font-semibold text-gray-700 mb-2">
                                 {t('admin.roleLabel')} <span className="text-red-500">*</span>
                             </label>
@@ -191,20 +159,90 @@ export default function AdminPage() {
                             </select>
                         </div>
 
-                        <div>
-                            <label htmlFor="phoneNumber" className="block text-sm font-semibold text-gray-700 mb-2">
-                                {t('admin.phoneLabel')}
-                            </label>
-                            <input
-                                id="phoneNumber"
-                                type="tel"
-                                value={formData.phoneNumber}
-                                onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
-                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                placeholder={t('admin.phonePlaceholder')}
-                            />
-                            <p className="mt-1 text-sm text-gray-500">{t('admin.phoneHint')}</p>
-                        </div>
+                        {formData.role !== 'cook' && (
+                            <>
+                                <div>
+                                    <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-2">
+                                        {t('admin.emailLabel')} <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        id="email"
+                                        type="email"
+                                        value={formData.email}
+                                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
+                                        required={formData.role !== 'cook'}
+                                        placeholder="user@example.com"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-2">
+                                        {t('admin.passwordLabel')} <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        id="password"
+                                        type="password"
+                                        value={formData.password}
+                                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
+                                        required={formData.role !== 'cook'}
+                                        placeholder={t('admin.passwordPlaceholder')}
+                                        minLength={6}
+                                    />
+                                    <p className="mt-1 text-sm text-gray-500">{t('admin.passwordHint')}</p>
+                                </div>
+                            </>
+                        )}
+
+                        {formData.role === 'cook' && (
+                            <>
+                                <div>
+                                    <label htmlFor="phoneNumber" className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Cook Phone Number <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        id="phoneNumber"
+                                        type="tel"
+                                        value={formData.phoneNumber}
+                                        onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
+                                        placeholder="+1234567890"
+                                        required={formData.role === 'cook'}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="pin" className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Cook Login PIN <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        id="pin"
+                                        type="password"
+                                        value={formData.password}
+                                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
+                                        placeholder="e.g. 1234"
+                                        required={formData.role === 'cook'}
+                                    />
+                                </div>
+                            </>
+                        )}
+
+                        {formData.role !== 'cook' && (
+                            <div>
+                                <label htmlFor="phoneNumber" className="block text-sm font-semibold text-gray-700 mb-2">
+                                    {t('admin.phoneLabel')}
+                                </label>
+                                <input
+                                    id="phoneNumber"
+                                    type="tel"
+                                    value={formData.phoneNumber}
+                                    onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
+                                    placeholder={t('admin.phonePlaceholder')}
+                                />
+                                <p className="mt-1 text-sm text-gray-500">{t('admin.phoneHint')}</p>
+                            </div>
+                        )}
 
                         <div className="pt-4">
                             <button
