@@ -41,6 +41,17 @@ export async function loginWithGoogleEmail(email: string, displayName?: string, 
         if (displayName && userData.displayName !== displayName) { dataToUpdate.displayName = displayName; updated = true; }
         if (photoURL && userData.photoURL !== photoURL) { dataToUpdate.photoURL = photoURL; updated = true; }
 
+        // Backfill houseCode/housePin for legacy owners created before these fields existed.
+        let houseCode = userData.houseCode;
+        let housePin = userData.housePin;
+        if (role === 'user' && (!houseCode || !housePin)) {
+            houseCode = houseCode || generateRandomCode(6);
+            housePin = housePin || generateRandomPin(6);
+            dataToUpdate.houseCode = houseCode;
+            dataToUpdate.housePin = housePin;
+            updated = true;
+        }
+
         if (updated) {
             const collectionName = role === 'user' ? USERS_COLLECTION : role === 'member' ? MEMBERS_COLLECTION : COOKS_COLLECTION;
             await setDoc(doc(db, collectionName, userDoc.id), dataToUpdate, { merge: true });
@@ -55,8 +66,8 @@ export async function loginWithGoogleEmail(email: string, displayName?: string, 
             phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
             linkedUserId: userData.linkedUserId,
             householdId: getHouseholdId(role, userDoc.id, userData.linkedUserId),
-            houseCode: userData.houseCode,
-            housePin: userData.housePin,
+            houseCode,
+            housePin,
         };
 
         const cookieStore = await cookies();
@@ -474,6 +485,15 @@ export async function refreshSession(): Promise<User | null> {
 
         const userData = docSnap.data();
 
+        // Backfill houseCode/housePin for legacy owners created before these fields existed.
+        let houseCode = userData.houseCode;
+        let housePin = userData.housePin;
+        if (parsedUser.role === 'user' && (!houseCode || !housePin)) {
+            houseCode = houseCode || generateRandomCode(6);
+            housePin = housePin || generateRandomPin(6);
+            await setDoc(docRef, { houseCode, housePin }, { merge: true });
+        }
+
         const freshUser: User = {
             uid: docSnap.id,
             email: userData.email,
@@ -483,8 +503,8 @@ export async function refreshSession(): Promise<User | null> {
             phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
             linkedUserId: userData.linkedUserId,
             householdId: getHouseholdId(parsedUser.role, docSnap.id, userData.linkedUserId),
-            houseCode: userData.houseCode,
-            housePin: userData.housePin,
+            houseCode,
+            housePin,
         };
 
         cookieStore.set(COOKIE_NAME, JSON.stringify(freshUser), {
