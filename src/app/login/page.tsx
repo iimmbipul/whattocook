@@ -1,12 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { loginWithGoogleEmail, loginWithPhoneAndPin } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
+
+declare global {
+    interface Window {
+        ReactNativeWebView?: { postMessage: (msg: string) => void };
+    }
+}
+
+const isInReactNativeWebView = () =>
+    typeof window !== 'undefined' && !!window.ReactNativeWebView;
 
 export default function LoginPage() {
     const [error, setError] = useState('');
@@ -18,12 +27,82 @@ export default function LoginPage() {
     const { setUser } = useAuth();
     const { t } = useLocale();
 
+    const finishGoogleLogin = async (
+        email: string,
+        displayName: string | null | undefined,
+        photoURL: string | null | undefined,
+    ) => {
+        const user = await loginWithGoogleEmail(email, displayName || undefined, photoURL || undefined);
+
+        if (user) {
+            setUser(user);
+            router.push('/');
+        } else {
+            localStorage.setItem('pendingRegistrationEmail', email);
+            localStorage.setItem('pendingRegistrationName', displayName || '');
+            localStorage.setItem('pendingRegistrationPhoto', photoURL || '');
+            router.push('/onboarding');
+        }
+    };
+
+    // When embedded inside the React Native WebView (mobile app), the native
+    // side does the Google Sign-In and posts the profile back here.
+    useEffect(() => {
+        if (!isInReactNativeWebView()) return;
+
+        const handler = async (event: Event) => {
+            const detail = (event as CustomEvent).detail as {
+                ok: boolean;
+                email?: string;
+                displayName?: string | null;
+                photoURL?: string | null;
+                error?: string;
+            };
+            if (!detail) return;
+
+            if (!detail.ok) {
+                if (detail.error && detail.error !== 'cancelled') {
+                    setError(detail.error);
+                }
+                setLoading(false);
+                return;
+            }
+
+            if (!detail.email) {
+                setError(t('login.googleNoEmail'));
+                setLoading(false);
+                return;
+            }
+
+            try {
+                await finishGoogleLogin(detail.email, detail.displayName, detail.photoURL);
+            } catch {
+                setError(t('login.googleError'));
+                setLoading(false);
+            }
+        };
+
+        window.addEventListener('nativeGoogleSignIn', handler as EventListener);
+        return () => window.removeEventListener('nativeGoogleSignIn', handler as EventListener);
+    }, []);
+
     const handleGoogleSignIn = async () => {
         setLoading(true);
         setError('');
 
+        // Inside the mobile app: ask the native side to run Google Sign-In.
+        // The response comes back via the `nativeGoogleSignIn` event above.
+        if (isInReactNativeWebView()) {
+            try {
+                window.ReactNativeWebView!.postMessage(JSON.stringify({ type: 'GOOGLE_SIGN_IN' }));
+            } catch {
+                setError(t('login.googleError'));
+                setLoading(false);
+            }
+            return;
+        }
+
         try {
-            // 1. Trigger Firebase Google popup (client-side identity verification)
             const result = await signInWithPopup(auth, googleProvider);
             const email = result.user.email;
             const displayName = result.user.displayName;
@@ -35,21 +114,8 @@ export default function LoginPage() {
                 return;
             }
 
-            // 2. Look up the email in Firestore to determine role & create session cookie
-            const user = await loginWithGoogleEmail(email, displayName || undefined, photoURL || undefined);
-
-            if (user) {
-                setUser(user);
-                router.push('/');
-            } else {
-                // User not found, redirect to onboarding to create or join household
-                localStorage.setItem('pendingRegistrationEmail', email);
-                localStorage.setItem('pendingRegistrationName', displayName || '');
-                localStorage.setItem('pendingRegistrationPhoto', photoURL || '');
-                router.push('/onboarding');
-            }
+            await finishGoogleLogin(email, displayName, photoURL);
         } catch (err: unknown) {
-            // User closed the popup or a network error occurred
             const firebaseErr = err as { code?: string };
             if (firebaseErr?.code !== 'auth/popup-closed-by-user' && firebaseErr?.code !== 'auth/cancelled-popup-request') {
                 setError(t('login.googleError'));

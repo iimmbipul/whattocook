@@ -1,7 +1,7 @@
 'use server';
 
 import { db } from './firebase';
-import { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, Timestamp, getDocs, writeBatch, query, where } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
 
 /**
@@ -9,6 +9,29 @@ import { MealDocument, MealItem } from '@/types/meal';
  * Admin can edit this via the Admin JSON Editor.
  */
 const TEMPLATES_COLLECTION = 'menu_templates';
+
+const USERS_COLLECTION = 'users';
+const MEMBERS_COLLECTION = 'members';
+const COOKS_COLLECTION = 'cooks';
+
+/**
+ * Return household participants eligible to receive cooking responsibility:
+ * owner + members. Cooks are excluded — they're hired help, not part of the
+ * rotation the household divides duties across.
+ */
+export async function getHouseholdMemberIds(householdId: string): Promise<string[]> {
+    const ids: string[] = [];
+
+    const ownerSnap = await getDoc(doc(db, USERS_COLLECTION, householdId));
+    if (ownerSnap.exists()) ids.push(householdId);
+
+    const membersSnap = await getDocs(
+        query(collection(db, MEMBERS_COLLECTION), where('linkedUserId', '==', householdId))
+    );
+    membersSnap.forEach(d => ids.push(d.id));
+
+    return ids;
+}
 
 /**
  * Returns the Firestore collection name for a specific household's meals.
@@ -274,6 +297,20 @@ export async function toggleMealAttendance(
             }
         });
 
+        // If this user was the assigned cook for the affected slot AND is now
+        // skipping any of that slot's meals, hand it off to the least-loaded
+        // member who isn't also skipping.
+        if (isSkipping) {
+            const resp = data.responsibility || {};
+            const isBLSlot = mealType === 'breakfast' || mealType === 'lunch';
+            if (isBLSlot && resp.breakfastLunchId === userId) {
+                await reassignSkippedSlot(docId, 'breakfastLunchId', householdId, userId);
+            }
+            if (mealType === 'dinner' && resp.dinnerId === userId) {
+                await reassignSkippedSlot(docId, 'dinnerId', householdId, userId);
+            }
+        }
+
         return true;
     } catch (error) {
         console.error('Error toggling attendance:', error);
@@ -358,6 +395,303 @@ export async function bulkUpdateMealResponsibility(
         console.error('Error in bulk update responsibility:', error);
         return { success: false, updated: 0, error: error.message };
     }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FAIR DISTRIBUTION of cooking responsibility
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Reset & evenly distribute cooking responsibility across all household participants.
+ * Iterates every meal doc in the household collection and assigns
+ * Breakfast+Lunch and Dinner slots in a round-robin so counts stay balanced.
+ */
+export async function redistributeResponsibilitiesEqually(
+    householdId: string,
+    memberIds: string[]
+): Promise<{ success: boolean; updated: number; error?: string }> {
+    try {
+        if (!memberIds.length) return { success: true, updated: 0 };
+
+        const hhCollection = getHouseholdCollection(householdId);
+        let snap = await getDocs(collection(db, hhCollection));
+
+        // Legacy households have no meal docs until the first edit — seed the
+        // subcollection from the master template so we have something to assign.
+        if (snap.empty) {
+            const templateSnap = await getDocs(collection(db, TEMPLATES_COLLECTION));
+            if (!templateSnap.empty) {
+                const seedBatch = writeBatch(db);
+                templateSnap.forEach((tDoc) => {
+                    const data = tDoc.data();
+                    const { id: _id, created_at: _c, updated_at: _u, ...rest } = data as any;
+                    const targetRef = doc(db, hhCollection, tDoc.id);
+                    seedBatch.set(targetRef, {
+                        ...rest,
+                        created_at: serverTimestamp(),
+                        updated_at: serverTimestamp(),
+                    });
+                });
+                await seedBatch.commit();
+                snap = await getDocs(collection(db, hhCollection));
+            }
+        }
+
+        if (snap.empty) {
+            return { success: false, updated: 0, error: 'No meal days found in household or template collection.' };
+        }
+
+        // Sort deterministically so re-runs produce the same schedule
+        const docs = snap.docs.slice().sort((a, b) => a.id.localeCompare(b.id));
+
+        // Weight each slot by the number of future meals it would produce,
+        // so the same rule used on the profile page (My Plates counting) gets
+        // balanced — template docs count for current + next month, past dates
+        // count for 0. Then greedily assign each slot (heaviest first) to the
+        // currently-least-loaded member.
+        const today = new Date();
+        const currentYear = today.getFullYear();
+        const currentMonth = today.getMonth() + 1;
+        const todayStr = today.toISOString().split('T')[0];
+
+        const futureOccurrences = (id: string): number => {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(id)) return id >= todayStr ? 1 : 0;
+            const dayNum = parseInt(id, 10);
+            if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) return 0;
+            const thisMonth = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+            let nextY = currentYear, nextM = currentMonth + 1;
+            if (nextM > 12) { nextM = 1; nextY++; }
+            const nextMonth = `${nextY}-${nextM.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+            return (thisMonth >= todayStr ? 1 : 0) + (nextMonth >= todayStr ? 1 : 0);
+        };
+
+        type Slot = { docIdx: number; kind: 'bl' | 'd'; weight: number };
+        const slots: Slot[] = [];
+        docs.forEach((docSnap, idx) => {
+            const data = docSnap.data() as MealDocument;
+            const occ = futureOccurrences(docSnap.id);
+            const blMeals = (data.breakfast ? 1 : 0) + (data.lunch ? 1 : 0);
+            const dMeals = data.dinner ? 1 : 0;
+            slots.push({ docIdx: idx, kind: 'bl', weight: occ * blMeals });
+            slots.push({ docIdx: idx, kind: 'd', weight: occ * dMeals });
+        });
+
+        // Heaviest slots first; tie-break by docIdx + kind for determinism
+        slots.sort((a, b) => b.weight - a.weight || a.docIdx - b.docIdx || (a.kind < b.kind ? -1 : 1));
+
+        const load: Record<string, number> = {};
+        memberIds.forEach(id => { load[id] = 0; });
+
+        // Rotating tiebreak so members with equal load don't all get pinned
+        // to the first uid in memberIds order.
+        let rotation = 0;
+
+        const assignments: Record<number, { bl?: string; d?: string }> = {};
+        for (const slot of slots) {
+            const ordered = memberIds
+                .slice(rotation)
+                .concat(memberIds.slice(0, rotation));
+            const pick = ordered.reduce((best, uid) =>
+                load[uid] < load[best] ? uid : best
+            , ordered[0]);
+            rotation = (rotation + 1) % memberIds.length;
+
+            load[pick] += slot.weight;
+            const cur = assignments[slot.docIdx] || {};
+            if (slot.kind === 'bl') cur.bl = pick; else cur.d = pick;
+            assignments[slot.docIdx] = cur;
+        }
+
+        const batch = writeBatch(db);
+        docs.forEach((docSnap, idx) => {
+            const a = assignments[idx] || {};
+            batch.set(docSnap.ref, {
+                responsibility: {
+                    breakfastLunchId: a.bl ?? null,
+                    dinnerId: a.d ?? null,
+                }
+            }, { merge: true });
+        });
+
+        await batch.commit();
+        return { success: true, updated: docs.length };
+    } catch (error: any) {
+        console.error('Error redistributing responsibilities:', error);
+        return { success: false, updated: 0, error: error.message };
+    }
+}
+
+/**
+ * Convenience wrapper: fetch members and redistribute in one call.
+ */
+export async function resetHouseholdResponsibilities(
+    householdId: string
+): Promise<{ success: boolean; updated: number; error?: string }> {
+    const memberIds = await getHouseholdMemberIds(householdId);
+    return redistributeResponsibilitiesEqually(householdId, memberIds);
+}
+
+/**
+ * Null out any responsibility assignments pointing at a departing member,
+ * so counts stay accurate and skipped-slot reassignment can pick them up.
+ */
+export async function clearMemberAssignments(
+    householdId: string,
+    memberUid: string
+): Promise<void> {
+    const hhCollection = getHouseholdCollection(householdId);
+    const snap = await getDocs(collection(db, hhCollection));
+    const batch = writeBatch(db);
+    let touched = 0;
+
+    snap.forEach(d => {
+        const data = d.data() as MealDocument;
+        const update: Record<string, unknown> = {};
+        if (data.responsibility?.breakfastLunchId === memberUid) {
+            update['responsibility.breakfastLunchId'] = null;
+        }
+        if (data.responsibility?.dinnerId === memberUid) {
+            update['responsibility.dinnerId'] = null;
+        }
+        if (Object.keys(update).length > 0) {
+            batch.update(doc(db, hhCollection, d.id), update);
+            touched++;
+        }
+    });
+
+    if (touched > 0) await batch.commit();
+}
+
+/**
+ * Per-member cooking-task counts, using the same rules as getUserMeals
+ * (My Plates → Cooking Duties) so the numbers match what the user sees there:
+ *   - counts individual meals, not responsibility slots
+ *     (Breakfast+Lunch assignment contributes 2, Dinner contributes 1)
+ *   - expands template day-of-month docs into current + next calendar month
+ *   - only counts today and future dates
+ */
+export async function getHouseholdAssignmentCounts(
+    householdId: string
+): Promise<Record<string, number>> {
+    const counts: Record<string, number> = {};
+    const bump = (uid: string, n: number) => {
+        counts[uid] = (counts[uid] ?? 0) + n;
+    };
+
+    const allMeals = await getAllMeals(householdId);
+
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1;
+    const todayStr = today.toISOString().split('T')[0];
+
+    const activeMealsMap = new Map<string, MealDocument>();
+
+    allMeals.forEach(doc => {
+        const isFullDate = /^\d{4}-\d{2}-\d{2}$/.test(doc.id);
+        if (isFullDate) {
+            activeMealsMap.set(doc.id, doc);
+        } else {
+            const dayNum = parseInt(doc.id, 10);
+            if (!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
+                const dateKey = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+                if (!activeMealsMap.has(dateKey)) activeMealsMap.set(dateKey, doc);
+
+                let nextMonth = currentMonth + 1;
+                let nextYear = currentYear;
+                if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+
+                const nextDateKey = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
+                if (!activeMealsMap.has(nextDateKey)) activeMealsMap.set(nextDateKey, doc);
+            }
+        }
+    });
+
+    activeMealsMap.forEach((doc, dateStr) => {
+        if (dateStr < todayStr) return;
+
+        const bl = doc.responsibility?.breakfastLunchId;
+        if (bl) {
+            let n = 0;
+            if (doc.breakfast) n++;
+            if (doc.lunch) n++;
+            if (n > 0) bump(bl, n);
+        }
+
+        const dn = doc.responsibility?.dinnerId;
+        if (dn && doc.dinner) {
+            bump(dn, 1);
+        }
+    });
+
+    return counts;
+}
+
+/**
+ * Count how many BL/Dinner slots each member is currently assigned across
+ * every household meal doc. Used to find the least-loaded replacement.
+ */
+async function countResponsibilities(
+    householdId: string,
+    memberIds: string[]
+): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    memberIds.forEach(id => counts.set(id, 0));
+
+    const hhCollection = getHouseholdCollection(householdId);
+    const snap = await getDocs(collection(db, hhCollection));
+    snap.forEach(d => {
+        const data = d.data() as MealDocument;
+        const bl = data.responsibility?.breakfastLunchId;
+        const dn = data.responsibility?.dinnerId;
+        if (bl && counts.has(bl)) counts.set(bl, counts.get(bl)! + 1);
+        if (dn && counts.has(dn)) counts.set(dn, counts.get(dn)! + 1);
+    });
+
+    return counts;
+}
+
+/**
+ * When the assigned cook for a slot skips one of its meals, find the
+ * least-loaded member who isn't skipping the same slot and reassign.
+ * If nobody is available (everyone skips), the slot is left unassigned.
+ */
+async function reassignSkippedSlot(
+    mealId: string,
+    slot: 'breakfastLunchId' | 'dinnerId',
+    householdId: string,
+    excludeUserId: string
+): Promise<void> {
+    const memberIds = await getHouseholdMemberIds(householdId);
+    if (!memberIds.length) return;
+
+    const hhCollection = getHouseholdCollection(householdId);
+    const mealRef = doc(db, hhCollection, mealId);
+    const mealSnap = await getDoc(mealRef);
+    if (!mealSnap.exists()) return;
+
+    const mealData = mealSnap.data() as MealDocument;
+    const attendance = mealData.attendance || {};
+    const slotMeals: Array<'breakfast' | 'lunch' | 'dinner'> =
+        slot === 'breakfastLunchId' ? ['breakfast', 'lunch'] : ['dinner'];
+
+    const isSkipping = (uid: string) => {
+        const a = attendance[uid];
+        if (!a) return false;
+        return slotMeals.some(m => a[m] === false);
+    };
+
+    const counts = await countResponsibilities(householdId, memberIds);
+
+    const candidates = memberIds
+        .filter(id => id !== excludeUserId && !isSkipping(id))
+        .sort((a, b) => (counts.get(a) ?? 0) - (counts.get(b) ?? 0));
+
+    const newAssignee = candidates[0] ?? null;
+
+    await updateDoc(mealRef, {
+        [`responsibility.${slot}`]: newAssignee,
+    });
 }
 
 

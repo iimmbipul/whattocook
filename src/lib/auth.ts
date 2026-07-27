@@ -1,10 +1,11 @@
 'use server';
 
 import { db } from './firebase';
-import { collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc, writeBatch, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc, writeBatch, serverTimestamp, setDoc, deleteDoc } from 'firebase/firestore';
 import { User, UserRole } from '@/types/meal';
 import { cookies } from 'next/headers';
 import { generate30DayPlan, MonthlyPlanDay } from './ai';
+import { resetHouseholdResponsibilities, clearMemberAssignments } from './firestore';
 
 const USERS_COLLECTION = 'users'; // Owners/Admins
 const MEMBERS_COLLECTION = 'members'; // Family members
@@ -262,6 +263,12 @@ export async function joinHousehold(email: string, houseCode: string, housePin: 
         };
 
         const docRef = await addDoc(collection(db, MEMBERS_COLLECTION), newMemberData);
+
+        try {
+            await resetHouseholdResponsibilities(ownerId);
+        } catch (redistErr) {
+            console.error('Failed to redistribute responsibilities after joinHousehold:', redistErr);
+        }
 
         const user: User = {
             uid: docRef.id,
@@ -600,6 +607,15 @@ export async function createUser(
         // Create new user document in correct collection
         const docRef = await addDoc(collection(db, targetCollection), userData);
 
+        // When a member or cook joins, rebalance cooking duties across the household.
+        if ((role === 'member' || role === 'cook') && linkedUserId) {
+            try {
+                await resetHouseholdResponsibilities(linkedUserId);
+            } catch (redistErr) {
+                console.error('Failed to redistribute responsibilities after createUser:', redistErr);
+            }
+        }
+
         return { success: true, userId: docRef.id };
     } catch (error: any) {
         console.error('Error creating user:', error);
@@ -710,6 +726,40 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
     } catch (error) {
         console.error('Error fetching household members:', error);
         return [];
+    }
+}
+
+/**
+ * Remove a household member (or cook) from the current owner's household.
+ * Only the owner (role 'user') may call this. Also clears any dangling
+ * responsibility assignments so counts remain accurate.
+ */
+export async function removeHouseholdMember(
+    memberUid: string,
+    memberRole: 'member' | 'cook'
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const currentUser = await getCurrentUser();
+        if (!currentUser) return { success: false, error: 'Not authenticated.' };
+        if (currentUser.role !== 'user') return { success: false, error: 'Only the household owner can remove members.' };
+        if (memberUid === currentUser.uid) return { success: false, error: 'You cannot remove yourself.' };
+
+        const collectionName = memberRole === 'member' ? MEMBERS_COLLECTION : COOKS_COLLECTION;
+        const memberRef = doc(db, collectionName, memberUid);
+        const memberSnap = await getDoc(memberRef);
+
+        if (!memberSnap.exists()) return { success: false, error: 'Member not found.' };
+        if (memberSnap.data().linkedUserId !== currentUser.uid) {
+            return { success: false, error: 'This member does not belong to your household.' };
+        }
+
+        await deleteDoc(memberRef);
+        await clearMemberAssignments(currentUser.uid, memberUid);
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error removing household member:', error);
+        return { success: false, error: 'Failed to remove member.' };
     }
 }
 
