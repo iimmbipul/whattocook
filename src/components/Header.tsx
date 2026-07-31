@@ -9,6 +9,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Settings, LogOut, UtensilsCrossed, ChevronDown, User as UserIcon } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { supportedLocales, localeLabels, type SupportedLocale } from '@/lib/i18n';
+import NotificationBell from './NotificationBell';
 
 export default function Header() {
     const { user } = useAuth();
@@ -82,6 +83,8 @@ export default function Header() {
 
                     {/* Action Hub */}
                     <nav className="flex items-center gap-2">
+                        <NotificationBell />
+
                         {user.role === 'user' && (
                             <button
                                 onClick={() => router.push('/admin')}

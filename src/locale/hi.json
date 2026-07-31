@@ -146,5 +146,27 @@
         "assignTitle": "👑 दैनिक जिम्मेदारियां असाइन करें",
         "assignDesc": "एक या अधिक तारीखें चुनें और सदस्यों को खाना बनाने के लिए असाइन करें",
         "backButton": "← डैशबोर्ड पर वापस"
+    },
+    "notifications": {
+        "title": "सूचनाएं",
+        "ariaBell": "सूचनाएं",
+        "empty": "अभी कोई सूचना नहीं है।",
+        "newCount": "{{count}} नई",
+        "mealType": {
+            "breakfast": "नाश्ता",
+            "lunch": "दोपहर का भोजन",
+            "dinner": "रात का भोजन"
+        },
+        "slot": {
+            "breakfastLunch": "नाश्ता + दोपहर का भोजन",
+            "dinner": "रात का भोजन"
+        },
+        "mealUpdated": "{{actor}} ने {{mealType}} अपडेट किया: {{fromName}} → {{toName}}",
+        "mealSkipped": "{{actor}} {{mealType}} ({{mealName}}) छोड़ रहे हैं",
+        "mealUnskipped": "{{actor}} {{mealType}} ({{mealName}}) के लिए वापस आ गए",
+        "guestAdded": "{{actor}} ने {{mealType}} ({{mealName}}) के लिए मेहमान जोड़ा",
+        "guestRemoved": "{{actor}} ने {{mealType}} ({{mealName}}) से मेहमान हटाया",
+        "respChanged": "{{actor}} ने {{slot}} की जिम्मेदारी {{toName}} को दी",
+        "respBulkChanged": "{{actor}} ने {{count}} दिनों की खाना पकाने की जिम्मेदारियां अपडेट कीं"
     }
 }

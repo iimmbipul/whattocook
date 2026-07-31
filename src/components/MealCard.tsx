@@ -8,6 +8,8 @@ import AttendingMembersModal from './AttendingMembersModal';
 import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone, Sparkles } from 'lucide-react';
 import { toggleMealAttendance } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
+import { useAuth } from './AuthProvider';
+import { actorFromUser } from '@/lib/actor';
 
 interface MealCardProps {
     meal: MealItem;
@@ -48,6 +50,7 @@ export default function MealCard({
     const [isMembersOpen, setIsMembersOpen] = useState(false);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
     const { t, locale } = useLocale();
+    const { user: authUser } = useAuth();
 
     // Resolve translated fields: use stored translation if available, fall back to English original
     const tx = (locale !== 'en' && meal.translations?.[locale]) ? meal.translations[locale] : null;
@@ -74,7 +77,7 @@ export default function MealCard({
         if (loadingAttendance) return;
         setLoadingAttendance(true);
         try {
-            await toggleMealAttendance(mealId, mealType, currentUserId, !amISkipping, householdId);
+            await toggleMealAttendance(mealId, mealType, currentUserId, !amISkipping, householdId, actorFromUser(authUser));
             if (onRefresh) {
                 onRefresh();
             }

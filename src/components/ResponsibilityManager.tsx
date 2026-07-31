@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { updateMealResponsibility } from '@/lib/firestore';
 import { UserCheck, User, Coffee, Utensils } from 'lucide-react';
+import { useAuth } from './AuthProvider';
+import { actorFromUser } from '@/lib/actor';
 
 interface Member {
     uid: string;
@@ -32,13 +34,29 @@ export default function ResponsibilityManager({
     householdId
 }: ResponsibilityManagerProps) {
     const [loading, setLoading] = useState<string | null>(null); // 'breakfastLunch' | 'dinner' | null
+    const { user: authUser } = useAuth();
+
+    const memberLabel = (uid?: string | null) =>
+        uid ? members.find(m => m.uid === uid)?.label ?? '' : '';
 
     const handleAssign = async (slot: 'breakfastLunchId' | 'dinnerId', userId: string) => {
         if (loading) return;
         setLoading(slot === 'breakfastLunchId' ? 'breakfastLunch' : 'dinner');
 
+        const fromName = memberLabel(
+            slot === 'breakfastLunchId' ? responsibility?.breakfastLunchId : responsibility?.dinnerId
+        );
+        const toName = memberLabel(userId) || 'Unassigned';
+
         try {
-            const success = await updateMealResponsibility(mealId, slot, userId, householdId);
+            const success = await updateMealResponsibility(
+                mealId,
+                slot,
+                userId,
+                householdId,
+                actorFromUser(authUser),
+                { fromName, toName },
+            );
             if (success) {
                 onRefresh();
             }
