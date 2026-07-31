@@ -159,8 +159,23 @@ export default function NotificationBell() {
                 )}
             </button>
 
+            {/* Mobile-first backdrop: click-away target on small screens where the panel becomes a sheet */}
+            {open && (
+                <button
+                    type="button"
+                    aria-label="Close notifications"
+                    onClick={() => setOpen(false)}
+                    className="sm:hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]"
+                />
+            )}
+
             <div
-                className={`absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] sm:w-96 max-w-[26rem] bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden transition-all transform origin-top-right z-50 ${open ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}`}
+                className={`
+                    z-50 bg-white shadow-xl border border-brand-light/20 overflow-hidden transition-all transform
+                    fixed left-2 right-2 top-[calc(4rem+env(safe-area-inset-top))] rounded-xl origin-top
+                    sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:inset-x-auto sm:w-96 sm:max-w-[26rem] sm:origin-top-right
+                    ${open ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}
+                `}
             >
                 <div className="px-4 py-3 border-b border-brand-light/20 flex items-center justify-between">
                     <span className="text-sm font-bold text-brand-darkest uppercase tracking-wide">
@@ -173,7 +188,7 @@ export default function NotificationBell() {
                     )}
                 </div>
 
-                <div className="max-h-[70vh] overflow-y-auto divide-y divide-brand-light/20">
+                <div className="max-h-[70vh] sm:max-h-[70vh] overflow-y-auto divide-y divide-brand-light/20 overscroll-contain">
                     {notifications.length === 0 ? (
                         <div className="px-4 py-10 text-center text-sm text-brand-dark/70">
                             <Check size={20} className="mx-auto mb-2 text-brand-light" />
