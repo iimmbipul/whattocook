@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { X, UserPlus, UserMinus, Users, CheckCircle2 } from 'lucide-react';
 import { addGuest, removeGuest } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
+import { useAuth } from './AuthProvider';
+import { actorFromUser } from '@/lib/actor';
 
 interface Member {
     uid: string;
@@ -38,6 +40,7 @@ export default function AttendingMembersModal({
     onRefresh,
 }: AttendingMembersModalProps) {
     const { t } = useLocale();
+    const { user: authUser } = useAuth();
     const [busyFor, setBusyFor] = useState<string | null>(null);
     const [successFor, setSuccessFor] = useState<{ uid: string; kind: 'added' | 'removed' } | null>(null);
 
@@ -58,7 +61,7 @@ export default function AttendingMembersModal({
         setBusyFor(uid);
         setSuccessFor(null);
         try {
-            const ok = await addGuest(mealId, mealType, uid, householdId);
+            const ok = await addGuest(mealId, mealType, uid, householdId, actorFromUser(authUser));
             if (ok) {
                 setSuccessFor({ uid, kind: 'added' });
                 onRefresh();
@@ -74,7 +77,7 @@ export default function AttendingMembersModal({
         setBusyFor(uid);
         setSuccessFor(null);
         try {
-            const ok = await removeGuest(mealId, mealType, uid, householdId);
+            const ok = await removeGuest(mealId, mealType, uid, householdId, actorFromUser(authUser));
             if (ok) {
                 setSuccessFor({ uid, kind: 'removed' });
                 onRefresh();

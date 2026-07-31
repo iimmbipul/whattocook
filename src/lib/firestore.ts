@@ -3,6 +3,9 @@
 import { db } from './firebase';
 import { collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, Timestamp, getDocs, writeBatch, query, where } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
+import { createNotification } from './notifications';
+
+export type NotificationActor = { uid: string; name: string };
 
 /**
  * Template collection — the read-only default menu that all new households see.
@@ -228,7 +231,8 @@ export async function updateMeal(
     mealId: string,
     updates: Partial<MealDocument>,
     householdId: string,
-    applyToAllMonths: boolean = false
+    applyToAllMonths: boolean = false,
+    actor?: NotificationActor
 ): Promise<boolean> {
     try {
         const isFullDate = /^\d{4}-\d{2}-\d{2}$/.test(mealId);
@@ -238,6 +242,10 @@ export async function updateMeal(
 
         const hhCollection = getHouseholdCollection(householdId);
         const mealRef = doc(db, hhCollection, docId);
+
+        // Capture previous name(s) so the notification can render "from → to".
+        const prevSnap = await getDoc(mealRef);
+        const prevData = prevSnap.exists() ? (prevSnap.data() as MealDocument) : null;
 
         await updateDoc(mealRef, {
             ...updates,
@@ -252,6 +260,27 @@ export async function updateMeal(
                 await updateDoc(specificRef, {
                     ...updates,
                     updated_at: serverTimestamp(),
+                });
+            }
+        }
+
+        if (actor) {
+            for (const type of ['breakfast', 'lunch', 'dinner'] as const) {
+                const next = (updates as any)?.[type] as MealItem | undefined;
+                if (!next) continue;
+                const prev = prevData?.[type] as MealItem | undefined;
+                if (prev && prev.item_name === next.item_name) continue;
+                await createNotification(householdId, {
+                    type: 'meal_updated',
+                    actorId: actor.uid,
+                    actorName: actor.name,
+                    date: isFullDate ? mealId : undefined,
+                    mealType: type,
+                    payload: {
+                        fromName: prev?.item_name ?? '',
+                        toName: next.item_name,
+                        applyToAllMonths: applyToAllMonths ? 1 : 0,
+                    },
                 });
             }
         }
@@ -271,7 +300,8 @@ export async function toggleMealAttendance(
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
     isSkipping: boolean,
-    householdId: string
+    householdId: string,
+    actor?: NotificationActor
 ): Promise<boolean> {
     try {
         const docId = mealId; // Always specific date
@@ -329,6 +359,19 @@ export async function toggleMealAttendance(
             }
         }
 
+        if (actor) {
+            await createNotification(householdId, {
+                type: isSkipping ? 'meal_skipped' : 'meal_unskipped',
+                actorId: actor.uid,
+                actorName: actor.name,
+                date: mealId,
+                mealType,
+                payload: {
+                    mealName: (data as any)?.[mealType]?.item_name ?? '',
+                },
+            });
+        }
+
         return true;
     } catch (error) {
         console.error('Error toggling attendance:', error);
@@ -343,7 +386,8 @@ export async function addGuest(
     mealId: string,
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
-    householdId: string
+    householdId: string,
+    actor?: NotificationActor
 ): Promise<boolean> {
     try {
         const docId = mealId;
@@ -364,6 +408,20 @@ export async function addGuest(
             [`guests.${userId}.${mealType}`]: current + 1,
         });
 
+        if (actor) {
+            await createNotification(householdId, {
+                type: 'guest_added',
+                actorId: actor.uid,
+                actorName: actor.name,
+                date: mealId,
+                mealType,
+                payload: {
+                    mealName: (data as any)?.[mealType]?.item_name ?? '',
+                    newCount: current + 1,
+                },
+            });
+        }
+
         return true;
     } catch (error) {
         console.error('Error adding guest:', error);
@@ -379,7 +437,8 @@ export async function removeGuest(
     mealId: string,
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
-    householdId: string
+    householdId: string,
+    actor?: NotificationActor
 ): Promise<boolean> {
     try {
         const docId = mealId;
@@ -400,6 +459,20 @@ export async function removeGuest(
             [`guests.${userId}.${mealType}`]: next > 0 ? next : deleteField(),
         });
 
+        if (actor) {
+            await createNotification(householdId, {
+                type: 'guest_removed',
+                actorId: actor.uid,
+                actorName: actor.name,
+                date: mealId,
+                mealType,
+                payload: {
+                    mealName: (data as any)?.[mealType]?.item_name ?? '',
+                    newCount: next,
+                },
+            });
+        }
+
         return true;
     } catch (error) {
         console.error('Error removing guest:', error);
@@ -414,7 +487,9 @@ export async function updateMealResponsibility(
     mealId: string,
     slot: 'breakfastLunchId' | 'dinnerId',
     userId: string | null,
-    householdId: string
+    householdId: string,
+    actor?: NotificationActor,
+    memberNames?: { fromName?: string; toName?: string }
 ): Promise<boolean> {
     try {
         const docId = mealId; // Always specific date
@@ -429,6 +504,20 @@ export async function updateMealResponsibility(
             [fieldPath]: userId || null
         });
 
+        if (actor) {
+            await createNotification(householdId, {
+                type: 'responsibility_changed',
+                actorId: actor.uid,
+                actorName: actor.name,
+                date: mealId,
+                payload: {
+                    slot,
+                    fromName: memberNames?.fromName ?? '',
+                    toName: memberNames?.toName ?? '',
+                },
+            });
+        }
+
         return true;
     } catch (error) {
         console.error('Error updating responsibility:', error);
@@ -442,7 +531,9 @@ export async function updateMealResponsibility(
 export async function bulkUpdateMealResponsibility(
     dates: string[],
     updates: { breakfastLunchId?: string | null; dinnerId?: string | null },
-    householdId: string
+    householdId: string,
+    actor?: NotificationActor,
+    memberNames?: { breakfastLunchName?: string; dinnerName?: string }
 ): Promise<{ success: boolean; updated: number; error?: string }> {
     try {
         if (dates.length === 0) return { success: true, updated: 0 };
@@ -479,6 +570,22 @@ export async function bulkUpdateMealResponsibility(
         });
 
         await batch.commit();
+
+        if (actor && count > 0) {
+            await createNotification(householdId, {
+                type: 'responsibility_bulk_changed',
+                actorId: actor.uid,
+                actorName: actor.name,
+                payload: {
+                    count,
+                    breakfastLunchName: memberNames?.breakfastLunchName ?? '',
+                    dinnerName: memberNames?.dinnerName ?? '',
+                    hasBL: updates.breakfastLunchId !== undefined ? 1 : 0,
+                    hasDinner: updates.dinnerId !== undefined ? 1 : 0,
+                },
+            });
+        }
+
         return { success: true, updated: count };
     } catch (error: any) {
         console.error('Error in bulk update responsibility:', error);

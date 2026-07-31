@@ -70,3 +70,28 @@ export interface User {
   housePin?: string;
   dietCategory?: string;
 }
+
+export type NotificationType =
+  | 'meal_updated'
+  | 'meal_skipped'
+  | 'meal_unskipped'
+  | 'guest_added'
+  | 'guest_removed'
+  | 'responsibility_changed'
+  | 'responsibility_bulk_changed';
+
+export interface NotificationDoc {
+  id: string;
+  type: NotificationType;
+  actorId: string;
+  actorName: string;
+  /** ISO YYYY-MM-DD when applicable */
+  date?: string;
+  mealType?: 'breakfast' | 'lunch' | 'dinner';
+  /** Free-form payload for message rendering: fromName, toName, newMealName, count, etc. */
+  payload?: Record<string, string | number | null | undefined>;
+  /** Milliseconds since epoch — set client-side via serverTimestamp on write */
+  createdAt: number;
+  /** UIDs of users who have marked this notification read */
+  readBy: string[];
+}

@@ -2,6 +2,8 @@
 
 import { MealItem, MealItemTranslation } from '@/types/meal';
 import { updateMeal } from '@/lib/firestore';
+import { useAuth } from './AuthProvider';
+import { actorFromUser } from '@/lib/actor';
 import { useState, useRef } from 'react';
 import { X, Utensils, Clock, Flame, Link as LinkIcon, Image as ImageIcon, CheckCircle, ShoppingCart, Sparkles } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
@@ -62,6 +64,7 @@ async function buildTranslations(
 
 export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose, onRefresh, householdId }: EditMealModalProps) {
     const { t } = useLocale();
+    const { user: authUser } = useAuth();
 
     const [formData, setFormData] = useState({
         item_name: meal.item_name || '',
@@ -136,7 +139,7 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
 
             const success = await updateMeal(mealId, {
                 [mealType]: updatedMeal,
-            } as any, householdId, applyToAllMonths);
+            } as any, householdId, applyToAllMonths, actorFromUser(authUser));
 
             if (success) {
 

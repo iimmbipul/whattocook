@@ -7,6 +7,8 @@ import { updateMeal } from '@/lib/firestore';
 import { translateTexts } from '@/lib/translate';
 import { supportedLocales } from '@/lib/i18n';
 import { MealItem, MealItemTranslation } from '@/types/meal';
+import { useAuth } from './AuthProvider';
+import { actorFromUser } from '@/lib/actor';
 
 interface AlternativeMealsModalProps {
     isOpen: boolean;
@@ -63,6 +65,7 @@ export default function AlternativeMealsModal({
     householdId,
     onRefresh
 }: AlternativeMealsModalProps) {
+    const { user: authUser } = useAuth();
     const [activeTab, setActiveTab] = useState<TabType>('protein');
     const [mealsMap, setMealsMap] = useState<Record<TabType, AlternativeMeal[]>>({
         protein: [],
@@ -155,7 +158,7 @@ export default function AlternativeMealsModal({
             // 4. Update in Firestore
             await updateMeal(mealId, {
                 [mealType]: updatedMeal,
-            } as any, householdId, false);
+            } as any, householdId, false, actorFromUser(authUser));
 
             if (onRefresh) onRefresh();
             onClose();

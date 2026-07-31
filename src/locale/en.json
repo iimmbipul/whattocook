@@ -146,5 +146,27 @@
         "assignTitle": "👑 Assign Daily Responsibilities",
         "assignDesc": "Select one or more dates and assign members to cook",
         "backButton": "← Back to Dashboard"
+    },
+    "notifications": {
+        "title": "Notifications",
+        "ariaBell": "Notifications",
+        "empty": "No notifications yet.",
+        "newCount": "{{count}} new",
+        "mealType": {
+            "breakfast": "breakfast",
+            "lunch": "lunch",
+            "dinner": "dinner"
+        },
+        "slot": {
+            "breakfastLunch": "Breakfast + Lunch",
+            "dinner": "Dinner"
+        },
+        "mealUpdated": "{{actor}} updated {{mealType}}: {{fromName}} → {{toName}}",
+        "mealSkipped": "{{actor}} is skipping {{mealType}} ({{mealName}})",
+        "mealUnskipped": "{{actor}} is back for {{mealType}} ({{mealName}})",
+        "guestAdded": "{{actor}} added a guest for {{mealType}} ({{mealName}})",
+        "guestRemoved": "{{actor}} removed a guest for {{mealType}} ({{mealName}})",
+        "respChanged": "{{actor}} reassigned {{slot}} to {{toName}}",
+        "respBulkChanged": "{{actor}} updated cooking duties on {{count}} days"
     }
 }

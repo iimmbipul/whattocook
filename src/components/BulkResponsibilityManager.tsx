@@ -5,6 +5,8 @@ import { bulkUpdateMealResponsibility } from '@/lib/firestore';
 import { UserCheck, User, Coffee, Utensils, CalendarDays, CheckCircle2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useLocale } from '@/context/LocaleContext';
+import { useAuth } from './AuthProvider';
+import { actorFromUser } from '@/lib/actor';
 
 interface Member {
     uid: string;
@@ -31,6 +33,7 @@ export default function BulkResponsibilityManager({
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
     const { t } = useLocale();
+    const { user: authUser } = useAuth();
 
     const handleApply = async () => {
         if (selectedDates.length === 0) {
@@ -62,7 +65,19 @@ export default function BulkResponsibilityManager({
                 updates.dinnerId = dinnerUser;
             }
 
-            const result = await bulkUpdateMealResponsibility(dateStrings, updates, householdId);
+            const labelFor = (val: string) =>
+                val === 'unassigned' || !val ? 'Unassigned' : members.find(m => m.uid === val)?.label ?? '';
+
+            const result = await bulkUpdateMealResponsibility(
+                dateStrings,
+                updates,
+                householdId,
+                actorFromUser(authUser),
+                {
+                    breakfastLunchName: brunchUser ? labelFor(brunchUser) : undefined,
+                    dinnerName: dinnerUser ? labelFor(dinnerUser) : undefined,
+                },
+            );
 
             if (result.success) {
                 setMessage({ type: 'success', text: t('bulk.successMessage', { count: result.updated }) });

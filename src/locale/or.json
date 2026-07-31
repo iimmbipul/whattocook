@@ -146,5 +146,27 @@
         "assignTitle": "👑 ଦୈନିକ ଦାୟିତ୍ୱ ନ୍ୟସ୍ତ କରନ୍ତୁ",
         "assignDesc": "ଏକ ବା ଅଧିକ ତାରିଖ ଚୟନ କର ଓ ରାନ୍ଧିବା ପାଇଁ ସଦସ୍ୟ ନ୍ୟସ୍ତ କରନ୍ତୁ",
         "backButton": "← ଡ୍ୟାଶବୋର୍ଡ଼କୁ ଫେରନ୍ତୁ"
+    },
+    "notifications": {
+        "title": "ବିଜ୍ଞପ୍ତି",
+        "ariaBell": "ବିଜ୍ଞପ୍ତି",
+        "empty": "ଏପର୍ଯ୍ୟନ୍ତ କୌଣସି ବିଜ୍ଞପ୍ତି ନାହିଁ।",
+        "newCount": "{{count}} ନୂଆ",
+        "mealType": {
+            "breakfast": "ଜଳଖିଆ",
+            "lunch": "ମଧ୍ୟାହ୍ନ ଭୋଜନ",
+            "dinner": "ରାତ୍ର ଭୋଜନ"
+        },
+        "slot": {
+            "breakfastLunch": "ଜଳଖିଆ + ମଧ୍ୟାହ୍ନ ଭୋଜନ",
+            "dinner": "ରାତ୍ର ଭୋଜନ"
+        },
+        "mealUpdated": "{{actor}} {{mealType}} ଅଦ୍ୟତନ କଲେ: {{fromName}} → {{toName}}",
+        "mealSkipped": "{{actor}} {{mealType}} ({{mealName}}) ଛାଡ଼ୁଛନ୍ତି",
+        "mealUnskipped": "{{actor}} {{mealType}} ({{mealName}}) ପାଇଁ ଫେରିଆସିଛନ୍ତି",
+        "guestAdded": "{{actor}} {{mealType}} ({{mealName}}) ପାଇଁ ଅତିଥି ଯୋଡ଼ିଲେ",
+        "guestRemoved": "{{actor}} {{mealType}} ({{mealName}}) ରୁ ଅତିଥି ହଟାଇଲେ",
+        "respChanged": "{{actor}} {{slot}} ଦାୟିତ୍ୱ {{toName}} ଙ୍କୁ ଦେଲେ",
+        "respBulkChanged": "{{actor}} {{count}} ଦିନର ରୋଷେଇ ଦାୟିତ୍ୱ ଅଦ୍ୟତନ କଲେ"
     }
 }
