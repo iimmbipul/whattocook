@@ -45,6 +45,17 @@
         "totalCalorie": "ମୋଟ କ୍ୟାଲୋରି",
         "kcalLeft": "{{amount}} ବଳିଛି"
     },
+    "attendingModal": {
+        "title": "ଏମାନଙ୍କ ପାଇଁ ରୋଷେଇ",
+        "noMembers": "ଏହି ଖାଦ୍ୟରେ କୌଣସି ସଦସ୍ୟ ଖାଉନାହାନ୍ତି।",
+        "guest": "ଅତିଥି",
+        "guests": "ଅତିଥି",
+        "addGuest": "ଅତିଥି ଯୋଡ଼ନ୍ତୁ",
+        "removeGuest": "ଅତିଥି ହଟାନ୍ତୁ",
+        "successCheckGroceries": "ଅତିଥି ସଫଳତାପୂର୍ବକ ଯୋଡ଼ାଗଲେ। ଦୟାକରି ମୁଦିଖାନା ଯାଞ୍ଚ କରନ୍ତୁ।",
+        "guestRemoved": "ଅତିଥି ହଟାଗଲେ।",
+        "onlySelfCanAddGuest": "ଆପଣ କେବଳ ନିଜ ନାମରେ ଅତିଥି ଯୋଡ଼ିପାରିବେ।"
+    },
     "editMeal": {
         "editTitle": "ସଂପାଦନ",
         "subtitle": "ଆପଣଙ୍କ ଖାଦ୍ୟ ବିବରଣ ଓ ପୋଷଣ ତଥ୍ୟ ଅଦ୍ୟତନ କରନ୍ତୁ",

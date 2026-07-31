@@ -41,10 +41,18 @@ export interface MealDocument {
   // true = eating (default), false = skipping
   attendance?: Record<string, { breakfast: boolean; lunch: boolean; dinner: boolean }>;
 
+  // Guests brought by each member for each meal type. Counted toward
+  // "cooking for" so groceries can be planned accordingly.
+  guests?: Record<string, { breakfast?: number; lunch?: number; dinner?: number }>;
+
   // Responsibility assignments
   responsibility?: {
     breakfastLunchId?: string; // User ID responsible for Breakfast + Lunch
     dinnerId?: string;       // User ID responsible for Dinner
+    // Original assignee before a skip-triggered reassignment. Used to
+    // restore the slot when the original chef un-skips.
+    breakfastLunchOriginalId?: string;
+    dinnerOriginalId?: string;
   };
 }
 
