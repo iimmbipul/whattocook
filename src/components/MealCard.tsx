@@ -4,6 +4,7 @@ import { MealItem, UserRole } from '@/types/meal';
 import { useState } from 'react';
 import EditMealModal from './EditMealModal';
 import AlternativeMealsModal from './AlternativeMealsModal';
+import AttendingMembersModal from './AttendingMembersModal';
 import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone, Sparkles } from 'lucide-react';
 import { toggleMealAttendance } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
@@ -15,6 +16,8 @@ interface MealCardProps {
     canEdit: boolean;
     phoneNumber: string;
     attendance?: Record<string, { breakfast: boolean; lunch: boolean; dinner: boolean }>;
+    guests?: Record<string, { breakfast?: number; lunch?: number; dinner?: number }>;
+    members?: { uid: string; label: string }[];
     totalMembers: number;
     currentUserId: string;
     userRole: UserRole;
@@ -30,6 +33,8 @@ export default function MealCard({
     canEdit,
     phoneNumber,
     attendance,
+    guests,
+    members,
     totalMembers,
     currentUserId,
     userRole,
@@ -40,6 +45,7 @@ export default function MealCard({
 }: MealCardProps & { onRefresh: () => void }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isBoredOpen, setIsBoredOpen] = useState(false);
+    const [isMembersOpen, setIsMembersOpen] = useState(false);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
     const { t, locale } = useLocale();
 
@@ -54,7 +60,11 @@ export default function MealCard({
         ? Object.values(attendance).filter(record => record[mealType] === false).length
         : 0;
 
-    const cookingForCount = Math.max(0, totalMembers - skippersCount);
+    const guestTotal = guests
+        ? Object.values(guests).reduce((sum, g) => sum + (g?.[mealType] ?? 0), 0)
+        : 0;
+
+    const cookingForCount = Math.max(0, totalMembers - skippersCount) + guestTotal;
 
     // Check my status
     const myRecord = attendance?.[currentUserId];
@@ -116,10 +126,14 @@ export default function MealCard({
                                 {(totalMembers > 0 || responsibleMemberName) && (
                                     <div className="flex flex-wrap gap-2 mt-1">
                                         {totalMembers > 0 && (
-                                            <div className="flex items-center gap-1.5 text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full w-fit border border-purple-100">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); setIsMembersOpen(true); }}
+                                                className="flex items-center gap-1.5 text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full w-fit border border-purple-100 hover:bg-purple-100 transition-colors"
+                                            >
                                                 <Users size={14} />
                                                 <span>{t('mealCard.cookingFor')} {cookingForCount}</span>
-                                            </div>
+                                            </button>
                                         )}
 
                                         {responsibleMemberName && (
@@ -282,6 +296,20 @@ export default function MealCard({
                 mealId={mealId}
                 mealType={mealType}
                 householdId={householdId}
+                onRefresh={onRefresh}
+            />
+
+            <AttendingMembersModal
+                isOpen={isMembersOpen}
+                onClose={() => setIsMembersOpen(false)}
+                mealId={mealId}
+                mealType={mealType}
+                mealLabel={config.label}
+                householdId={householdId}
+                currentUserId={currentUserId}
+                members={members ?? []}
+                attendance={attendance}
+                guests={guests}
                 onRefresh={onRefresh}
             />
         </>

@@ -45,6 +45,17 @@
         "totalCalorie": "कुल कैलोरी",
         "kcalLeft": "{{amount}} बचे"
     },
+    "attendingModal": {
+        "title": "इनके लिए बना रहे हैं",
+        "noMembers": "इस भोजन में कोई सदस्य नहीं खा रहा है।",
+        "guest": "मेहमान",
+        "guests": "मेहमान",
+        "addGuest": "मेहमान जोड़ें",
+        "removeGuest": "मेहमान हटाएँ",
+        "successCheckGroceries": "मेहमान सफलतापूर्वक जोड़ा गया। कृपया किराने का सामान देख लें।",
+        "guestRemoved": "मेहमान हटा दिया गया।",
+        "onlySelfCanAddGuest": "आप केवल अपने नाम के अंतर्गत मेहमान जोड़ सकते हैं।"
+    },
     "editMeal": {
         "editTitle": "संपादित करें",
         "subtitle": "अपने खाने की जानकारी और पोषण विवरण अपडेट करें",

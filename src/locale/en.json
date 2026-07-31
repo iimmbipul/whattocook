@@ -45,6 +45,17 @@
         "totalCalorie": "Total calorie",
         "kcalLeft": "{{amount}} left"
     },
+    "attendingModal": {
+        "title": "Cooking for",
+        "noMembers": "No members eating this meal.",
+        "guest": "guest",
+        "guests": "guests",
+        "addGuest": "Add guest",
+        "removeGuest": "Remove guest",
+        "successCheckGroceries": "Guest added successfully. Please check the groceries.",
+        "guestRemoved": "Guest removed.",
+        "onlySelfCanAddGuest": "You can only add guests under your own name."
+    },
     "editMeal": {
         "editTitle": "Edit",
         "subtitle": "Update your meal details and nutritional info",

@@ -126,6 +126,10 @@ export default function DashboardContent() {
 
         const editIndicator = canEdit ? '' : '';
 
+        // Exclude cooks from the "who's eating" universe — they cook but don't count as diners.
+        const eaters = members.filter(m => m.role !== 'cook');
+        const eaterCount = eaters.length || memberCount;
+
         // Helper to get responsible name
         const getResponsibleName = (uid?: string) => {
             if (!uid) return undefined;
@@ -163,7 +167,9 @@ export default function DashboardContent() {
                         canEdit={canEdit}
                         phoneNumber={user.phoneNumber}
                         attendance={meal.attendance}
-                        totalMembers={memberCount}
+                        guests={meal.guests}
+                        members={eaters.map(m => ({ uid: m.uid, label: m.label }))}
+                        totalMembers={eaterCount}
                         currentUserId={user.uid}
                         userRole={user.role}
                         responsibleMemberName={breakfastLunchResp}
@@ -178,7 +184,9 @@ export default function DashboardContent() {
                         canEdit={canEdit}
                         phoneNumber={user.phoneNumber}
                         attendance={meal.attendance}
-                        totalMembers={memberCount}
+                        guests={meal.guests}
+                        members={eaters.map(m => ({ uid: m.uid, label: m.label }))}
+                        totalMembers={eaterCount}
                         currentUserId={user.uid}
                         userRole={user.role}
                         responsibleMemberName={breakfastLunchResp}
@@ -193,7 +201,9 @@ export default function DashboardContent() {
                         canEdit={canEdit}
                         phoneNumber={user.phoneNumber}
                         attendance={meal.attendance}
-                        totalMembers={memberCount}
+                        guests={meal.guests}
+                        members={eaters.map(m => ({ uid: m.uid, label: m.label }))}
+                        totalMembers={eaterCount}
                         currentUserId={user.uid}
                         userRole={user.role}
                         responsibleMemberName={dinnerResp}

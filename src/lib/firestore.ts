@@ -1,7 +1,7 @@
 'use server';
 
 import { db } from './firebase';
-import { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, Timestamp, getDocs, writeBatch, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, Timestamp, getDocs, writeBatch, query, where } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
 
 /**
@@ -297,23 +297,112 @@ export async function toggleMealAttendance(
             }
         });
 
-        // If this user was the assigned cook for the affected slot AND is now
-        // skipping any of that slot's meals, hand it off to the least-loaded
-        // member who isn't also skipping.
-        if (isSkipping) {
-            const resp = data.responsibility || {};
-            const isBLSlot = mealType === 'breakfast' || mealType === 'lunch';
-            if (isBLSlot && resp.breakfastLunchId === userId) {
-                await reassignSkippedSlot(docId, 'breakfastLunchId', householdId, userId);
-            }
-            if (mealType === 'dinner' && resp.dinnerId === userId) {
-                await reassignSkippedSlot(docId, 'dinnerId', householdId, userId);
+        const resp = data.responsibility || {};
+        const isBLSlot = mealType === 'breakfast' || mealType === 'lunch';
+        const slot: 'breakfastLunchId' | 'dinnerId' | null = isBLSlot
+            ? 'breakfastLunchId'
+            : mealType === 'dinner'
+                ? 'dinnerId'
+                : null;
+
+        console.log('[toggleMealAttendance]', { mealId, mealType, userId, isSkipping, slot, responsibility: data.responsibility });
+        if (slot) {
+            if (isSkipping) {
+                // If this user was the assigned cook for the affected slot,
+                // hand it off to the least-loaded member who isn't also
+                // skipping. reassignSkippedSlot records the original assignee.
+                if (resp[slot] === userId) {
+                    await reassignSkippedSlot(docId, slot, householdId, userId);
+                }
+            } else {
+                // Coming back to eat: if this user was the original chef
+                // before a skip-triggered handoff, restore the slot to them.
+                const originalField = slot === 'breakfastLunchId'
+                    ? 'breakfastLunchOriginalId'
+                    : 'dinnerOriginalId';
+                if (resp[originalField] === userId) {
+                    await updateDoc(mealRef, {
+                        [`responsibility.${slot}`]: userId,
+                        [`responsibility.${originalField}`]: deleteField(),
+                    });
+                }
             }
         }
 
         return true;
     } catch (error) {
         console.error('Error toggling attendance:', error);
+        return false;
+    }
+}
+
+/**
+ * Add one guest under a member for a specific meal on a given date.
+ */
+export async function addGuest(
+    mealId: string,
+    mealType: 'breakfast' | 'lunch' | 'dinner',
+    userId: string,
+    householdId: string
+): Promise<boolean> {
+    try {
+        const docId = mealId;
+        await ensureHouseholdDoc(docId, householdId);
+
+        const hhCollection = getHouseholdCollection(householdId);
+        const mealRef = doc(db, hhCollection, docId);
+
+        const mealSnap = await getDoc(mealRef);
+        if (!mealSnap.exists()) return false;
+
+        const data = mealSnap.data() as MealDocument;
+        const guests = data.guests || {};
+        const userGuests = guests[userId] || {};
+        const current = userGuests[mealType] || 0;
+
+        await updateDoc(mealRef, {
+            [`guests.${userId}.${mealType}`]: current + 1,
+        });
+
+        return true;
+    } catch (error) {
+        console.error('Error adding guest:', error);
+        return false;
+    }
+}
+
+/**
+ * Remove one guest under a member for a specific meal on a given date.
+ * No-op if the member has no guests recorded for that meal.
+ */
+export async function removeGuest(
+    mealId: string,
+    mealType: 'breakfast' | 'lunch' | 'dinner',
+    userId: string,
+    householdId: string
+): Promise<boolean> {
+    try {
+        const docId = mealId;
+        await ensureHouseholdDoc(docId, householdId);
+
+        const hhCollection = getHouseholdCollection(householdId);
+        const mealRef = doc(db, hhCollection, docId);
+
+        const mealSnap = await getDoc(mealRef);
+        if (!mealSnap.exists()) return false;
+
+        const data = mealSnap.data() as MealDocument;
+        const current = data.guests?.[userId]?.[mealType] ?? 0;
+        if (current <= 0) return false;
+
+        const next = current - 1;
+        await updateDoc(mealRef, {
+            [`guests.${userId}.${mealType}`]: next > 0 ? next : deleteField(),
+        });
+
+        return true;
+    } catch (error) {
+        console.error('Error removing guest:', error);
         return false;
     }
 }
@@ -689,8 +778,16 @@ async function reassignSkippedSlot(
 
     const newAssignee = candidates[0] ?? null;
 
+    const originalField = slot === 'breakfastLunchId'
+        ? 'breakfastLunchOriginalId'
+        : 'dinnerOriginalId';
+    const existingOriginal = mealData.responsibility?.[originalField];
+
     await updateDoc(mealRef, {
         [`responsibility.${slot}`]: newAssignee,
+        // Preserve the original chef so they can reclaim the slot on un-skip.
+        // Only set on the first handoff — later hops keep the true original.
+        ...(existingOriginal ? {} : { [`responsibility.${originalField}`]: excludeUserId }),
     });
 }
 
