@@ -89,6 +89,9 @@ function buildEvent(
         description: parts.join('\n\n'),
         start: { dateTime: startDateTime, timeZone: DEFAULT_TIMEZONE },
         end: { dateTime: endDateTime, timeZone: DEFAULT_TIMEZONE },
+        // Always send status=confirmed so a PATCH restores an event that
+        // the user soft-deleted (cancelled) from their calendar UI.
+        status: 'confirmed',
         reminders: {
             useDefault: false,
             overrides: [{ method: 'popup', minutes: SLOT_REMINDER_MINUTES[slot] }],

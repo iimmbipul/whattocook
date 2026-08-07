@@ -105,6 +105,11 @@ export interface CalendarEventInput {
         useDefault?: boolean;
         overrides?: { method: 'popup' | 'email'; minutes: number }[];
     };
+    // Including "confirmed" on PATCH un-cancels an event the user soft-deleted
+    // from their calendar (deleted events sit in Trash with status=cancelled
+    // for 30 days; PATCHing without a status field silently keeps them
+    // invisible).
+    status?: 'confirmed' | 'tentative' | 'cancelled';
 }
 
 /**
