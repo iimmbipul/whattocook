@@ -105,15 +105,33 @@ function isFullDate(id: string): boolean {
 }
 
 /**
+ * Process-wide cache of freshly-refreshed access tokens keyed by uid.
+ * Access tokens are valid for ~1h, so caching for 55 min is safe. This
+ * lets a single sync run (which may touch dozens of days for the same
+ * chef) reuse one refresh instead of paying for one per slot.
+ */
+const ACCESS_TOKEN_TTL_MS = 55 * 60 * 1000;
+const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+/**
  * Given a member's uid, resolve access token from stored refresh_token.
  * Returns null (not throws) when the user hasn't connected — the sync
  * loop treats that as "skip this chef, leave no event".
  */
 async function accessTokenFor(uid: string): Promise<string | null> {
+    const cached = accessTokenCache.get(uid);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.token;
+    }
+
     const conn = await getCalendarConnection(uid);
     if (!conn) return null;
     try {
         const t = await refreshAccessToken(conn.refreshToken);
+        accessTokenCache.set(uid, {
+            token: t.access_token,
+            expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
+        });
         return t.access_token;
     } catch (err) {
         console.warn(`[calendarSync] refresh failed for ${uid}:`, err);
@@ -297,24 +315,36 @@ async function materializeDate(householdId: string, dateStr: string): Promise<bo
  */
 export async function backfillCalendarSync(
     householdId: string,
-    days: number = 30
-): Promise<{ synced: number; skipped: number }> {
+    days: number = 14,
+    startOffset: number = 0
+): Promise<{ synced: number; skipped: number; nextOffset: number | null }> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const BATCH_SIZE = 5;
     let synced = 0;
     let skipped = 0;
+
+    const dates: string[] = [];
     for (let i = 0; i < days; i++) {
         const d = new Date(today);
-        d.setDate(today.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
-        const ok = await materializeDate(householdId, dateStr);
-        if (!ok) {
-            skipped++;
-            continue;
-        }
-        await syncMealCalendar(householdId, dateStr);
-        synced++;
+        d.setDate(today.getDate() + startOffset + i);
+        dates.push(d.toISOString().split('T')[0]);
     }
-    return { synced, skipped };
+
+    for (let i = 0; i < dates.length; i += BATCH_SIZE) {
+        const batch = dates.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(batch.map(async (dateStr) => {
+            const ok = await materializeDate(householdId, dateStr);
+            if (!ok) return false;
+            await syncMealCalendar(householdId, dateStr);
+            return true;
+        }));
+        for (const ok of results) ok ? synced++ : skipped++;
+    }
+
+    // Caller can pass startOffset + days to continue on the next range
+    // without duplicating work. Null when we've caught the full 30-day window.
+    const nextOffset = startOffset + days >= 30 ? null : startOffset + days;
+    return { synced, skipped, nextOffset };
 }

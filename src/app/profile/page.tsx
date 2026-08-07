@@ -68,13 +68,24 @@ export default function ProfilePage() {
         setSyncingCal(true);
         setSyncResult(null);
         try {
-            const res = await fetch('/api/calendar/backfill', { method: 'POST' });
-            const data = await res.json();
-            if (res.ok) {
-                setSyncResult(`Synced ${data.synced} day${data.synced === 1 ? '' : 's'}. Check your Google Calendar.`);
-            } else {
-                setSyncResult(`Sync failed: ${data.error ?? 'unknown error'}`);
+            let totalSynced = 0;
+            let offset = 0;
+            // Loop until the server signals we've reached the end of its
+            // 30-day window. Each call syncs up to ~10 days so it fits under
+            // the serverless function timeout.
+            for (let step = 0; step < 6; step++) {
+                const res = await fetch(`/api/calendar/backfill?days=10&offset=${offset}`, { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) {
+                    setSyncResult(`Sync failed: ${data.error ?? 'unknown error'}`);
+                    return;
+                }
+                totalSynced += data.synced ?? 0;
+                setSyncResult(`Syncing… ${totalSynced} days pushed so far`);
+                if (data.nextOffset == null) break;
+                offset = data.nextOffset;
             }
+            setSyncResult(`Synced ${totalSynced} day${totalSynced === 1 ? '' : 's'}. Check your Google Calendar.`);
         } catch (err: any) {
             setSyncResult(`Sync failed: ${err?.message ?? 'network error'}`);
         } finally {
