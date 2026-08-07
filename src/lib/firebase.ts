@@ -16,5 +16,10 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+// Ask for calendar permission upfront during the Firebase sign-in consent
+// screen, so the follow-up offline OAuth flow (which we still need for a
+// refresh token) doesn't have to show a second consent screen — Google
+// silently returns tokens for scopes already granted.
+googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
 
 export { app, db, auth, googleProvider };

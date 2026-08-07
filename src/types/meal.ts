@@ -45,6 +45,18 @@ export interface MealDocument {
   // "cooking for" so groceries can be planned accordingly.
   guests?: Record<string, { breakfast?: number; lunch?: number; dinner?: number }>;
 
+  // Google Calendar sync state — one entry per responsibility slot pointing
+  // at the event currently in the assigned chef's primary calendar. Kept so
+  // we can delete/rewrite when the chef changes. Slots mirror
+  // responsibility: breakfastLunch (combined) and dinner.
+  calendarEvents?: {
+    breakfastLunch?: { chefUid: string; eventId: string };
+    dinner?: { chefUid: string; eventId: string };
+    // Legacy per-meal keys — cleaned up on next sync.
+    breakfast?: { chefUid: string; eventId: string };
+    lunch?: { chefUid: string; eventId: string };
+  };
+
   // Responsibility assignments
   responsibility?: {
     breakfastLunchId?: string; // User ID responsible for Breakfast + Lunch

@@ -36,6 +36,20 @@ export default function LoginPage() {
 
         if (user) {
             setUser(user);
+            // Since Firebase login already asked for the calendar.events scope,
+            // kicking off the offline OAuth flow is a silent redirect that
+            // grabs a refresh_token without another consent screen. Skip if
+            // the user has already connected (server route checks its own env
+            // config; if unset it 500s harmlessly and we fall through).
+            try {
+                const status = await fetch('/api/calendar/status').then(r => r.ok ? r.json() : null);
+                if (status && !status.connected) {
+                    window.location.href = '/api/calendar/oauth/start';
+                    return;
+                }
+            } catch {
+                // status endpoint missing / unreachable — fall through to home
+            }
             router.push('/');
         } else {
             localStorage.setItem('pendingRegistrationEmail', email);

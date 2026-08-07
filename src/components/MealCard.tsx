@@ -5,11 +5,39 @@ import { useState } from 'react';
 import EditMealModal from './EditMealModal';
 import AlternativeMealsModal from './AlternativeMealsModal';
 import AttendingMembersModal from './AttendingMembersModal';
-import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone, Sparkles } from 'lucide-react';
+import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone, Sparkles, Youtube, Instagram, X } from 'lucide-react';
 import { toggleMealAttendance } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from './AuthProvider';
 import { actorFromUser } from '@/lib/actor';
+
+function getVideoEmbed(url?: string): { src: string; kind: 'youtube' | 'instagram' } | null {
+    if (!url) return null;
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+
+        if (host === 'youtu.be') {
+            const id = u.pathname.slice(1).split('/')[0];
+            if (id) return { src: `https://www.youtube.com/embed/${id}`, kind: 'youtube' };
+        }
+        if (host.endsWith('youtube.com') || host === 'm.youtube.com') {
+            const v = u.searchParams.get('v');
+            if (v) return { src: `https://www.youtube.com/embed/${v}`, kind: 'youtube' };
+            const shorts = u.pathname.match(/^\/shorts\/([^/]+)/);
+            if (shorts) return { src: `https://www.youtube.com/embed/${shorts[1]}`, kind: 'youtube' };
+            const embed = u.pathname.match(/^\/embed\/([^/]+)/);
+            if (embed) return { src: `https://www.youtube.com/embed/${embed[1]}`, kind: 'youtube' };
+        }
+        if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+            const m = u.pathname.match(/^\/(?:p|reel|reels|tv)\/([^/]+)/);
+            if (m) return { src: `https://www.instagram.com/p/${m[1]}/embed`, kind: 'instagram' };
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
 
 interface MealCardProps {
     meal: MealItem;
@@ -48,6 +76,7 @@ export default function MealCard({
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isBoredOpen, setIsBoredOpen] = useState(false);
     const [isMembersOpen, setIsMembersOpen] = useState(false);
+    const [isVideoOpen, setIsVideoOpen] = useState(false);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
     const { t, locale } = useLocale();
     const { user: authUser } = useAuth();
@@ -98,6 +127,8 @@ export default function MealCard({
     };
 
     const config = getMealConfig();
+
+    const videoEmbed = getVideoEmbed(meal.recipe_url);
 
     return (
         <>
@@ -200,6 +231,21 @@ export default function MealCard({
                             </div>
                         </div>
 
+                        <div className="flex items-center gap-2 shrink-0">
+                        {videoEmbed && (
+                            <button
+                                type="button"
+                                onClick={() => setIsVideoOpen(true)}
+                                title={videoEmbed.kind === 'youtube' ? 'Watch recipe video' : 'Watch recipe reel'}
+                                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                                    videoEmbed.kind === 'youtube'
+                                        ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100'
+                                        : 'bg-pink-50 text-pink-600 hover:bg-pink-100 border border-pink-100'
+                                }`}
+                            >
+                                {videoEmbed.kind === 'youtube' ? <Youtube size={18} /> : <Instagram size={18} />}
+                            </button>
+                        )}
                         {/* Action Circle */}
                         <button
                             onClick={() => canEdit && setIsModalOpen(true)}
@@ -210,6 +256,7 @@ export default function MealCard({
                         >
                             {canEdit ? <Pencil size={20} /> : <Check size={20} />}
                         </button>
+                        </div>
                     </div>
 
                     {/* Secondary Actions (Attendance & I am bored) */}
@@ -301,6 +348,43 @@ export default function MealCard({
                 householdId={householdId}
                 onRefresh={onRefresh}
             />
+
+            {videoEmbed && isVideoOpen && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                    onClick={() => setIsVideoOpen(false)}
+                >
+                    <div
+                        className="relative w-full max-w-3xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            type="button"
+                            onClick={() => setIsVideoOpen(false)}
+                            className="absolute -top-10 right-0 text-white/90 hover:text-white flex items-center gap-1 text-sm"
+                            aria-label="Close video"
+                        >
+                            <X size={20} /> Close
+                        </button>
+                        <div
+                            className="relative w-full overflow-hidden rounded-xl bg-black shadow-2xl"
+                            style={{
+                                paddingTop: videoEmbed.kind === 'instagram' ? '125%' : '56.25%',
+                                maxHeight: '85vh',
+                            }}
+                        >
+                            <iframe
+                                src={videoEmbed.src}
+                                title={`${displayName} video`}
+                                className="absolute inset-0 h-full w-full"
+                                frameBorder={0}
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <AttendingMembersModal
                 isOpen={isMembersOpen}

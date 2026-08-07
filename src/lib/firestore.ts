@@ -4,6 +4,7 @@ import { db } from './firebase';
 import { collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, Timestamp, getDocs, writeBatch, query, where } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
 import { createNotification } from './notifications';
+import { syncMealCalendarAsync } from './calendarSync';
 
 export type NotificationActor = { uid: string; name: string };
 
@@ -285,6 +286,10 @@ export async function updateMeal(
             }
         }
 
+        // Push updated meal details to the chef's Google Calendar (only
+        // meaningful for specific-date docs; template days are skipped).
+        if (isFullDate) await syncMealCalendarAsync(householdId, mealId);
+
         return true;
     } catch (error) {
         console.error('Error updating meal:', error);
@@ -371,6 +376,11 @@ export async function toggleMealAttendance(
                 },
             });
         }
+
+        // Attendance toggles can hand off / restore a chef assignment
+        // (see reassignSkippedSlot). Sync so the affected chef's calendar
+        // reflects the current owner of the slot.
+        await syncMealCalendarAsync(householdId, mealId);
 
         return true;
     } catch (error) {
@@ -518,6 +528,8 @@ export async function updateMealResponsibility(
             });
         }
 
+        await syncMealCalendarAsync(householdId, mealId);
+
         return true;
     } catch (error) {
         console.error('Error updating responsibility:', error);
@@ -570,6 +582,14 @@ export async function bulkUpdateMealResponsibility(
         });
 
         await batch.commit();
+
+        if (count > 0) {
+            // Fan out calendar sync per changed date. Kept sequential to
+            // avoid hammering Google's API when a full month is redistributed.
+            for (const dateStr of dates) {
+                await syncMealCalendarAsync(householdId, dateStr);
+            }
+        }
 
         if (actor && count > 0) {
             await createNotification(householdId, {
@@ -710,6 +730,15 @@ export async function redistributeResponsibilitiesEqually(
         });
 
         await batch.commit();
+
+        // Sync only the real-date docs; template day docs (e.g. "01") are
+        // filtered out inside syncMealCalendar.
+        for (const docSnap of docs) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(docSnap.id)) {
+                await syncMealCalendarAsync(householdId, docSnap.id);
+            }
+        }
+
         return { success: true, updated: docs.length };
     } catch (error: any) {
         console.error('Error redistributing responsibilities:', error);
@@ -755,7 +784,17 @@ export async function clearMemberAssignments(
         }
     });
 
-    if (touched > 0) await batch.commit();
+    if (touched > 0) {
+        await batch.commit();
+        // Rebuild calendar events for affected real-date docs so the
+        // departing member's events get deleted (and any successor picked
+        // up by reassignment logic gets a new event).
+        snap.forEach(d => {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(d.id)) {
+                syncMealCalendarAsync(householdId, d.id).catch(() => {});
+            }
+        });
+    }
 }
 
 /**
