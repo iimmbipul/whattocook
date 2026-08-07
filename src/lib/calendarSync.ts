@@ -125,7 +125,10 @@ async function accessTokenFor(uid: string): Promise<string | null> {
     }
 
     const conn = await getCalendarConnection(uid);
-    if (!conn) return null;
+    if (!conn) {
+        console.log(`[calendarSync] no calendar connection for uid=${uid}`);
+        return null;
+    }
     try {
         const t = await refreshAccessToken(conn.refreshToken);
         accessTokenCache.set(uid, {
@@ -164,17 +167,42 @@ async function safeDelete(uid: string, eventId: string): Promise<void> {
  * Called after every meal-mutating write. Failures are logged but never
  * thrown — calendar sync is best-effort and must not break the app flow.
  */
-export async function syncMealCalendar(householdId: string, mealId: string): Promise<void> {
-    if (!isFullDate(mealId)) return; // Template day docs have no real date
+export interface SyncStats {
+    created: number;
+    updated: number;
+    deleted: number;
+    noChef: number;
+    chefNotConnected: number;
+    errors: number;
+}
+
+function emptyStats(): SyncStats {
+    return { created: 0, updated: 0, deleted: 0, noChef: 0, chefNotConnected: 0, errors: 0 };
+}
+
+export async function syncMealCalendar(householdId: string, mealId: string): Promise<SyncStats> {
+    const stats = emptyStats();
+
+    if (!isFullDate(mealId)) {
+        console.log(`[calendarSync] skip ${mealId} — not a full-date doc`);
+        return stats;
+    }
 
     try {
         const ref = doc(db, HOUSEHOLD_COLLECTION(householdId), mealId);
         const snap = await getDoc(ref);
-        if (!snap.exists()) return;
+        if (!snap.exists()) {
+            console.log(`[calendarSync] skip ${mealId} — no household doc`);
+            return stats;
+        }
 
         const data = snap.data() as MealDocument;
         const currentEvents = data.calendarEvents ?? {};
         const responsibility = data.responsibility ?? {};
+        console.log(`[calendarSync] ${mealId} responsibility=`, {
+            blChef: responsibility.breakfastLunchId ?? null,
+            dinnerChef: responsibility.dinnerId ?? null,
+        });
 
         // Legacy cleanup: earlier versions stored per-meal events under
         // `breakfast` / `lunch` keys. If we see those, delete them from the
@@ -195,20 +223,28 @@ export async function syncMealCalendar(householdId: string, mealId: string): Pro
 
             // No chef or nothing to cook → drop any existing event
             if (!chefUid || !event) {
-                if (existing) await safeDelete(existing.chefUid, existing.eventId);
+                if (existing) {
+                    await safeDelete(existing.chefUid, existing.eventId);
+                    stats.deleted++;
+                } else {
+                    stats.noChef++;
+                }
                 continue;
             }
 
             // Chef changed → delete old, create new
             if (existing && existing.chefUid !== chefUid) {
                 await safeDelete(existing.chefUid, existing.eventId);
+                stats.deleted++;
                 const token = await accessTokenFor(chefUid);
-                if (!token) continue; // new chef hasn't connected
+                if (!token) { stats.chefNotConnected++; continue; }
                 try {
                     const newId = await createCalendarEvent(token, event);
                     nextEvents[slot] = { chefUid, eventId: newId };
+                    stats.created++;
                 } catch (err) {
                     console.warn(`[calendarSync] create failed for ${chefUid}:`, err);
+                    stats.errors++;
                 }
                 continue;
             }
@@ -216,31 +252,34 @@ export async function syncMealCalendar(householdId: string, mealId: string): Pro
             // Chef unchanged and event exists → patch (meal name/ingredients may have changed)
             if (existing && existing.chefUid === chefUid) {
                 const token = await accessTokenFor(chefUid);
-                if (!token) continue; // chef disconnected — drop record
+                if (!token) { stats.chefNotConnected++; continue; }
                 try {
                     const stillExists = await updateCalendarEvent(token, existing.eventId, event);
                     if (stillExists) {
                         nextEvents[slot] = existing;
+                        stats.updated++;
                         continue;
                     }
-                    // Event was deleted from the chef's calendar (404/410).
-                    // Recreate so Sync now restores what the user removed.
                     const newId = await createCalendarEvent(token, event);
                     nextEvents[slot] = { chefUid, eventId: newId };
+                    stats.created++;
                 } catch (err) {
                     console.warn(`[calendarSync] patch/recreate failed for ${chefUid}:`, err);
+                    stats.errors++;
                 }
                 continue;
             }
 
             // No existing event, chef assigned → create fresh
             const token = await accessTokenFor(chefUid);
-            if (!token) continue;
+            if (!token) { stats.chefNotConnected++; continue; }
             try {
                 const newId = await createCalendarEvent(token, event);
                 nextEvents[slot] = { chefUid, eventId: newId };
+                stats.created++;
             } catch (err) {
                 console.warn(`[calendarSync] create failed for ${chefUid}:`, err);
+                stats.errors++;
             }
         }
 
@@ -251,7 +290,9 @@ export async function syncMealCalendar(householdId: string, mealId: string): Pro
         });
     } catch (err) {
         console.warn(`[calendarSync] sync failed for ${householdId}/${mealId}:`, err);
+        stats.errors++;
     }
+    return stats;
 }
 
 /**
@@ -264,7 +305,8 @@ export async function syncMealCalendarAsync(householdId: string, mealId: string)
     // before the detached promise resolves. In dev/self-host that's fine;
     // on Vercel prefer `waitUntil` or awaiting inline. We await here so it
     // completes deterministically, and rely on failures being swallowed.
-    await syncMealCalendar(householdId, mealId);
+    const stats = await syncMealCalendar(householdId, mealId);
+    console.log(`[calendarSync] ${mealId} stats=`, stats);
 }
 
 /**
@@ -324,13 +366,14 @@ export async function backfillCalendarSync(
     householdId: string,
     days: number = 14,
     startOffset: number = 0
-): Promise<{ synced: number; skipped: number; nextOffset: number | null }> {
+): Promise<{ synced: number; skipped: number; nextOffset: number | null; stats: SyncStats }> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const BATCH_SIZE = 5;
     let synced = 0;
     let skipped = 0;
+    const total = emptyStats();
 
     const dates: string[] = [];
     for (let i = 0; i < days; i++) {
@@ -343,15 +386,21 @@ export async function backfillCalendarSync(
         const batch = dates.slice(i, i + BATCH_SIZE);
         const results = await Promise.all(batch.map(async (dateStr) => {
             const ok = await materializeDate(householdId, dateStr);
-            if (!ok) return false;
-            await syncMealCalendar(householdId, dateStr);
-            return true;
+            if (!ok) return null;
+            return await syncMealCalendar(householdId, dateStr);
         }));
-        for (const ok of results) ok ? synced++ : skipped++;
+        for (const r of results) {
+            if (r === null) { skipped++; continue; }
+            synced++;
+            total.created += r.created;
+            total.updated += r.updated;
+            total.deleted += r.deleted;
+            total.noChef += r.noChef;
+            total.chefNotConnected += r.chefNotConnected;
+            total.errors += r.errors;
+        }
     }
 
-    // Caller can pass startOffset + days to continue on the next range
-    // without duplicating work. Null when we've caught the full 30-day window.
     const nextOffset = startOffset + days >= 30 ? null : startOffset + days;
-    return { synced, skipped, nextOffset };
+    return { synced, skipped, nextOffset, stats: total };
 }

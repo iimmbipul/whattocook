@@ -69,10 +69,8 @@ export default function ProfilePage() {
         setSyncResult(null);
         try {
             let totalSynced = 0;
+            const totals = { created: 0, updated: 0, deleted: 0, noChef: 0, chefNotConnected: 0, errors: 0 };
             let offset = 0;
-            // Loop until the server signals we've reached the end of its
-            // 30-day window. Each call syncs up to ~10 days so it fits under
-            // the serverless function timeout.
             for (let step = 0; step < 6; step++) {
                 const res = await fetch(`/api/calendar/backfill?days=10&offset=${offset}`, { method: 'POST' });
                 const data = await res.json();
@@ -81,16 +79,34 @@ export default function ProfilePage() {
                     return;
                 }
                 totalSynced += data.synced ?? 0;
+                if (data.stats) {
+                    totals.created += data.stats.created;
+                    totals.updated += data.stats.updated;
+                    totals.deleted += data.stats.deleted;
+                    totals.noChef += data.stats.noChef;
+                    totals.chefNotConnected += data.stats.chefNotConnected;
+                    totals.errors += data.stats.errors;
+                }
                 setSyncResult(`Syncing… ${totalSynced} days pushed so far`);
                 if (data.nextOffset == null) break;
                 offset = data.nextOffset;
             }
-            setSyncResult(`Synced ${totalSynced} day${totalSynced === 1 ? '' : 's'}. Check your Google Calendar.`);
+            // Build a concise summary that also explains why events might be missing.
+            const parts = [
+                `${totalSynced} day${totalSynced === 1 ? '' : 's'} scanned`,
+                `${totals.created} created`,
+                `${totals.updated} updated`,
+            ];
+            if (totals.deleted) parts.push(`${totals.deleted} deleted`);
+            if (totals.noChef) parts.push(`${totals.noChef} slot${totals.noChef === 1 ? '' : 's'} had no chef`);
+            if (totals.chefNotConnected) parts.push(`${totals.chefNotConnected} chef slot${totals.chefNotConnected === 1 ? '' : 's'} not connected`);
+            if (totals.errors) parts.push(`${totals.errors} errors`);
+            setSyncResult(parts.join(' · '));
         } catch (err: any) {
             setSyncResult(`Sync failed: ${err?.message ?? 'network error'}`);
         } finally {
             setSyncingCal(false);
-            setTimeout(() => setSyncResult(null), 6000);
+            setTimeout(() => setSyncResult(null), 12000);
         }
     };
 

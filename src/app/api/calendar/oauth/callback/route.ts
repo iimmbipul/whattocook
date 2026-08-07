@@ -86,13 +86,16 @@ export async function GET(req: NextRequest) {
             // non-fatal — email is only used for UI display
         }
 
+        console.log(`[calendar/oauth/callback] saving connection uid=${user.uid} email=${email ?? 'unknown'}`);
         const saved = await saveCalendarConnection(user.uid, tokens.refresh_token, email);
         if (!saved) {
+            console.warn(`[calendar/oauth/callback] save failed — no users/${user.uid} or members/${user.uid} doc`);
             return new NextResponse(
-                html('error', 'Could not persist tokens — user record not found.'),
+                html('error', `Could not persist tokens — no user record found for uid ${user.uid}. Check Firestore users/members collection.`),
                 { status: 500, headers: { 'Content-Type': 'text/html' } }
             );
         }
+        console.log(`[calendar/oauth/callback] saved successfully for uid=${user.uid}`);
 
         // Success — bounce back to the app root so the user lands where
         // they'd normally be after login. Profile page still shows the
