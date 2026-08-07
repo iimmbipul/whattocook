@@ -218,10 +218,17 @@ export async function syncMealCalendar(householdId: string, mealId: string): Pro
                 const token = await accessTokenFor(chefUid);
                 if (!token) continue; // chef disconnected — drop record
                 try {
-                    await updateCalendarEvent(token, existing.eventId, event);
-                    nextEvents[slot] = existing;
+                    const stillExists = await updateCalendarEvent(token, existing.eventId, event);
+                    if (stillExists) {
+                        nextEvents[slot] = existing;
+                        continue;
+                    }
+                    // Event was deleted from the chef's calendar (404/410).
+                    // Recreate so Sync now restores what the user removed.
+                    const newId = await createCalendarEvent(token, event);
+                    nextEvents[slot] = { chefUid, eventId: newId };
                 } catch (err) {
-                    console.warn(`[calendarSync] patch failed for ${chefUid}:`, err);
+                    console.warn(`[calendarSync] patch/recreate failed for ${chefUid}:`, err);
                 }
                 continue;
             }
