@@ -2,11 +2,12 @@
 
 import { useAuth } from '@/components/AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
-import { User as UserIcon, Mail, Phone, Hash, Shield, Users, Utensils, RefreshCw, CheckCircle2, ChefHat, Plus, X, Scale, Trash2 } from 'lucide-react';
+import { User as UserIcon, Mail, Phone, Hash, Shield, Users, Utensils, RefreshCw, CheckCircle2, ChefHat, Plus, X, Scale, Trash2, Calendar } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { getHouseholdDietCategory, changeDietCategory, getAllHouseholdMembers, createUser, removeHouseholdMember } from '@/lib/auth';
 import { resetHouseholdResponsibilities, getHouseholdAssignmentCounts } from '@/lib/firestore';
+import { isCalendarConnected } from '@/lib/calendarTokens';
 
 const DIET_CATEGORIES = [
     { id: 'Healthy', icon: '🥗', desc: 'Nutritious & low guilt' },
@@ -43,6 +44,55 @@ export default function ProfilePage() {
 
     const [resettingResp, setResettingResp] = useState(false);
     const [resetRespResult, setResetRespResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+    const [calendarStatus, setCalendarStatus] = useState<{ connected: boolean; email?: string } | null>(null);
+    const [disconnectingCal, setDisconnectingCal] = useState(false);
+    const [syncingCal, setSyncingCal] = useState(false);
+    const [syncResult, setSyncResult] = useState<string | null>(null);
+
+    const loadCalendarStatus = () => {
+        if (!user?.uid) return;
+        isCalendarConnected(user.uid).then(setCalendarStatus).catch(() => setCalendarStatus({ connected: false }));
+    };
+
+    useEffect(() => {
+        loadCalendarStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.uid]);
+
+    const handleConnectCalendar = () => {
+        window.location.href = '/api/calendar/oauth/start';
+    };
+
+    const handleSyncCalendar = async () => {
+        setSyncingCal(true);
+        setSyncResult(null);
+        try {
+            const res = await fetch('/api/calendar/backfill', { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+                setSyncResult(`Synced ${data.synced} day${data.synced === 1 ? '' : 's'}. Check your Google Calendar.`);
+            } else {
+                setSyncResult(`Sync failed: ${data.error ?? 'unknown error'}`);
+            }
+        } catch (err: any) {
+            setSyncResult(`Sync failed: ${err?.message ?? 'network error'}`);
+        } finally {
+            setSyncingCal(false);
+            setTimeout(() => setSyncResult(null), 6000);
+        }
+    };
+
+    const handleDisconnectCalendar = async () => {
+        if (!confirm('Disconnect Google Calendar? Existing events will remain on your calendar but new meal assignments won\'t sync.')) return;
+        setDisconnectingCal(true);
+        try {
+            await fetch('/api/calendar/disconnect', { method: 'POST' });
+            loadCalendarStatus();
+        } finally {
+            setDisconnectingCal(false);
+        }
+    };
 
     const handleResetResponsibilities = async () => {
         if (!user?.householdId) return;
@@ -281,6 +331,56 @@ export default function ProfilePage() {
                                         <div className="text-sm text-gray-400 mb-1">Current Active Plan</div>
                                         <div className="font-bold text-2xl text-white">{dietCategory || 'Custom Template'}</div>
                                     </div>
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                                <h3 className="text-xl font-bold text-brand-secondary flex items-center gap-3">
+                                    <Calendar size={24} />
+                                    Google Calendar Sync
+                                </h3>
+                                {calendarStatus?.connected ? (
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={handleSyncCalendar}
+                                            disabled={syncingCal}
+                                            className="text-sm bg-brand-secondary/20 hover:bg-brand-secondary/30 text-brand-secondary px-4 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center gap-2"
+                                        >
+                                            <RefreshCw size={14} className={syncingCal ? 'animate-spin' : ''} />
+                                            {syncingCal ? 'Syncing…' : 'Sync now'}
+                                        </button>
+                                        <button
+                                            onClick={handleDisconnectCalendar}
+                                            disabled={disconnectingCal}
+                                            className="text-sm bg-red-500/20 hover:bg-red-500/30 text-red-300 px-4 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                        >
+                                            {disconnectingCal ? 'Disconnecting…' : 'Disconnect'}
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={handleConnectCalendar}
+                                        className="text-sm bg-white text-black hover:bg-gray-100 px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2"
+                                    >
+                                        <Calendar size={14} /> Connect
+                                    </button>
+                                )}
+                            </div>
+                            {calendarStatus === null ? (
+                                <div className="animate-pulse h-12 bg-white/5 rounded-xl" />
+                            ) : calendarStatus.connected ? (
+                                <div className="bg-green-500/10 border border-green-500/30 text-green-300 p-4 rounded-xl">
+                                    <div className="font-bold">Connected{calendarStatus.email ? ` as ${calendarStatus.email}` : ''}</div>
+                                    <div className="text-sm opacity-80 mt-1">Meals you're assigned to cook appear on your calendar with a 1 hour & 15 min reminder. Chef changes update automatically. Use <strong>Sync now</strong> to push the next 30 days.</div>
+                                    {syncResult && (
+                                        <div className="mt-2 text-sm text-white/90 bg-white/5 rounded-lg px-3 py-2">{syncResult}</div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="bg-white/5 border border-white/10 text-gray-300 p-4 rounded-xl text-sm">
+                                    Connect your Google account so meals you're assigned to cook show up on your calendar. Each member connects their own account — chef reassignments (skips, redistributions) update the right calendar automatically.
                                 </div>
                             )}
                         </section>
