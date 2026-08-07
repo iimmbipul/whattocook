@@ -55,8 +55,19 @@ export async function GET(req: NextRequest) {
         });
     }
 
+    // Rebuild the same redirect URI the /start route sent to Google — the
+    // token exchange must use an exact match or Google returns
+    // redirect_uri_mismatch. Trust proxy headers first (Vercel etc), then
+    // fall back to the request URL's origin.
+    const forwardedProto = req.headers.get('x-forwarded-proto');
+    const forwardedHost = req.headers.get('x-forwarded-host');
+    const origin = forwardedHost
+        ? `${forwardedProto ?? 'https'}://${forwardedHost}`
+        : url.origin;
+    const redirectUri = `${origin}/api/calendar/oauth/callback`;
+
     try {
-        const tokens = await exchangeCodeForTokens(code);
+        const tokens = await exchangeCodeForTokens(code, redirectUri);
         if (!tokens.refresh_token) {
             // Happens when the user previously connected offline and Google
             // is only returning access tokens on subsequent grants. Force a
