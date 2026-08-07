@@ -23,13 +23,23 @@ export async function GET(req: NextRequest) {
     }
 
     const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-    const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
-    if (!clientId || !redirectUri) {
+    if (!clientId) {
         return NextResponse.json(
-            { error: 'Google OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_REDIRECT_URI.' },
+            { error: 'Google OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID.' },
             { status: 500 }
         );
     }
+
+    // Derive the redirect URI from the incoming request so a single OAuth
+    // client works across localhost, preview, and production without env
+    // swaps. Prefer the standard proxy headers if present (Vercel, Cloudflare,
+    // etc), otherwise fall back to the request URL's origin.
+    const forwardedProto = req.headers.get('x-forwarded-proto');
+    const forwardedHost = req.headers.get('x-forwarded-host');
+    const origin = forwardedHost
+        ? `${forwardedProto ?? 'https'}://${forwardedHost}`
+        : url.origin;
+    const redirectUri = `${origin}/api/calendar/oauth/callback`;
 
     // CSRF-guard the callback by binding a random nonce + the caller's uid
     // into a signed cookie, checked in the callback route.

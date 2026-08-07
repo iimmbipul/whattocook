@@ -23,7 +23,7 @@ function requireEnv(name: string): string {
  * Exchange an authorization code for tokens. Returns refresh_token when
  * the consent was granted with access_type=offline + prompt=consent.
  */
-export async function exchangeCodeForTokens(code: string): Promise<{
+export async function exchangeCodeForTokens(code: string, redirectUri: string): Promise<{
     access_token: string;
     refresh_token?: string;
     expires_in: number;
@@ -35,7 +35,8 @@ export async function exchangeCodeForTokens(code: string): Promise<{
         code,
         client_id: requireEnv('GOOGLE_OAUTH_CLIENT_ID'),
         client_secret: requireEnv('GOOGLE_OAUTH_CLIENT_SECRET'),
-        redirect_uri: requireEnv('GOOGLE_OAUTH_REDIRECT_URI'),
+        // Must match the redirect_uri used in the authorize request exactly.
+        redirect_uri: redirectUri,
         grant_type: 'authorization_code',
     });
 
