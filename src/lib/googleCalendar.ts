@@ -131,13 +131,16 @@ export async function createCalendarEvent(
 }
 
 /**
- * Patch an existing event.
+ * Patch an existing event. Returns:
+ *   - true  if the event was patched successfully
+ *   - false if the event no longer exists (404 or 410 — deleted from calendar)
+ * Throws on any other failure so callers can decide whether to retry.
  */
 export async function updateCalendarEvent(
     accessToken: string,
     eventId: string,
     event: Partial<CalendarEventInput>
-): Promise<void> {
+): Promise<boolean> {
     const res = await fetch(
         `${CALENDAR_BASE}/calendars/primary/events/${encodeURIComponent(eventId)}`,
         {
@@ -149,10 +152,10 @@ export async function updateCalendarEvent(
             body: JSON.stringify(event),
         }
     );
-    if (!res.ok && res.status !== 404) {
-        const text = await res.text();
-        throw new Error(`Calendar patch failed (${res.status}): ${text}`);
-    }
+    if (res.ok) return true;
+    if (res.status === 404 || res.status === 410) return false;
+    const text = await res.text();
+    throw new Error(`Calendar patch failed (${res.status}): ${text}`);
 }
 
 /**
