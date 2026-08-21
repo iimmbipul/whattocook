@@ -343,10 +343,14 @@ export async function toggleMealAttendance(
         console.log('[toggleMealAttendance]', { mealId, mealType, userId, isSkipping, slot, responsibility: data.responsibility });
         if (slot) {
             if (isSkipping) {
-                // If this user was the assigned cook for the affected slot,
-                // hand it off to the least-loaded member who isn't also
-                // skipping. reassignSkippedSlot records the original assignee.
-                if (resp[slot] === userId) {
+                // Hand off only when the chef will actually miss the whole
+                // slot. For the combined breakfast+lunch slot that means
+                // both meals are skipped; skipping just one still leaves
+                // them cooking for the other, so keep the assignment.
+                const skipsWholeSlot = slot === 'breakfastLunchId'
+                    ? userAttendance.breakfast === false && userAttendance.lunch === false
+                    : userAttendance.dinner === false;
+                if (resp[slot] === userId && skipsWholeSlot) {
                     await reassignSkippedSlot(docId, slot, householdId, userId);
                 }
             } else {
