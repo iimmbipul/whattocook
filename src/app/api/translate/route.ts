@@ -31,6 +31,52 @@ function normalizeDigits(input: string): string {
     });
 }
 
+// Module-scoped rolling-window TPM tracker. Shared across concurrent
+// requests in the same Node process so we don't collectively bust the
+// on_demand tier's 8000-tokens-per-minute cap on openai/gpt-oss-20b.
+const TPM_LIMIT = 8000;
+const TPM_SOFT_LIMIT = 7200;     // leave headroom for estimate error
+const TPM_WINDOW_MS = 60_000;
+const rateWindow: { ts: number; tokens: number }[] = [];
+
+function trimRateWindow(now: number) {
+    while (rateWindow.length && now - rateWindow[0].ts > TPM_WINDOW_MS) {
+        rateWindow.shift();
+    }
+}
+
+async function waitForTpmBudget(needTokens: number): Promise<void> {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+        const now = Date.now();
+        trimRateWindow(now);
+        const used = rateWindow.reduce((s, e) => s + e.tokens, 0);
+        if (used + needTokens <= TPM_SOFT_LIMIT || rateWindow.length === 0) return;
+        const oldest = rateWindow[0];
+        const waitMs = Math.max(250, oldest.ts + TPM_WINDOW_MS - now + 250);
+        await new Promise((r) => setTimeout(r, waitMs));
+    }
+}
+
+function recordTpmUsage(tokens: number) {
+    rateWindow.push({ ts: Date.now(), tokens });
+}
+
+function parseRetryAfterMs(err: any): number | null {
+    // Groq returns "Please try again in 5.07s" and/or a retry-after header
+    const msg: string | undefined = err?.message ?? err?.responseBody;
+    if (typeof msg === 'string') {
+        const m = msg.match(/try again in\s+([\d.]+)s/i);
+        if (m) return Math.ceil(parseFloat(m[1]) * 1000) + 250;
+    }
+    const header = err?.responseHeaders?.['retry-after'];
+    if (header) {
+        const n = parseFloat(header);
+        if (!Number.isNaN(n)) return Math.ceil(n * 1000) + 250;
+    }
+    return null;
+}
+
 export async function POST(req: NextRequest) {
     if (!process.env.GROQ_API_KEY) {
         return NextResponse.json(
@@ -61,8 +107,10 @@ export async function POST(req: NextRequest) {
         // so a single request stays well under the ceiling.
         const TPM_BUDGET = 7000;               // leave headroom under 8000
         const SYSTEM_OVERHEAD_TOKENS = 400;    // rough est of system+scaffold
-        const OUTPUT_EXPANSION = 2.2;          // non-Latin scripts can be 1.5-2x
-        const MAX_OUTPUT_PER_CHUNK = 2000;
+        const OUTPUT_EXPANSION = 4.0;          // non-Latin scripts + JSON quoting
+        const MAX_OUTPUT_PER_CHUNK = 4500;
+        const MAX_ITEMS_PER_CHUNK = 5;         // cap batch size independent of tokens
+        const MIN_OUTPUT_TOKENS = 1024;        // floor covers residual reasoning + output
 
         const estimateTokens = (s: string) => Math.ceil(s.length / 4);
 
@@ -78,7 +126,8 @@ export async function POST(req: NextRequest) {
                 Math.ceil(projectedInput * OUTPUT_EXPANSION) + 64,
             );
             const projectedTotal = SYSTEM_OVERHEAD_TOKENS + projectedInput + projectedOutput;
-            if (current.length > 0 && projectedTotal > TPM_BUDGET) {
+            const wouldExceedItems = current.length >= MAX_ITEMS_PER_CHUNK;
+            if (current.length > 0 && (projectedTotal > TPM_BUDGET || wouldExceedItems)) {
                 chunks.push(current);
                 current = [t];
                 currentInputTokens = tTokens;
@@ -94,38 +143,108 @@ export async function POST(req: NextRequest) {
             const inputTokens = estimateTokens(numbered);
             const maxOutputTokens = Math.min(
                 MAX_OUTPUT_PER_CHUNK,
-                Math.max(256, Math.ceil(inputTokens * OUTPUT_EXPANSION) + 128),
+                Math.max(MIN_OUTPUT_TOKENS, Math.ceil(inputTokens * OUTPUT_EXPANSION) + 256),
             );
 
-            const { text } = await generateText({
+            // Reserve budget before firing so we don't collectively bust TPM.
+            const reservation = SYSTEM_OVERHEAD_TOKENS + inputTokens + maxOutputTokens;
+
+            const callModel = async () => generateText({
                 model: groq('openai/gpt-oss-20b'),
+                // gpt-oss-20b is a reasoning model; without this, ~90% of the
+                // output budget is spent on chain-of-thought and translations
+                // get truncated. Translation doesn't need reasoning.
+                providerOptions: {
+                    groq: {
+                        reasoningEffort: 'low',
+                        reasoningFormat: 'hidden',
+                    },
+                },
                 system: `You are a professional translator. Translate the given numbered list of texts from ${languageName(sourceLang)} to ${languageName(targetLang)}.
 
 CRITICAL INSTRUCTIONS:
-- Output ONLY a JSON array of translated strings, in the same order as the input.
-- The output array MUST contain exactly ${chunk.length} items.
+- Output exactly ${chunk.length} lines, each formatted as: "<N>. <translation>"
+- <N> is the same number as the input line. Numbers must run 1..${chunk.length} in order.
+- Each translation must be on ONE line — no line breaks inside a translation.
 - Preserve proper nouns, brand names, and food/dish names naturally (transliterate if needed).
 - Keep ALL digits as Western Arabic numerals (0-9). Do NOT convert numbers to native scripts (e.g. Hindi ७, Odia ୭, Bengali ৭). "7" must stay "7" in every language.
-- Do NOT include the numbering in the translations.
-- Do NOT include markdown, backticks, comments, or any extra text. Output RAW JSON only.
+- Do NOT add any preamble, epilogue, headings, markdown, backticks, or commentary. Output ONLY the numbered lines.
 
-Example output shape: ["translation1", "translation2", ...]`,
+Example output for 2 items:
+1. first translation
+2. second translation`,
                 prompt: `Translate the following ${chunk.length} texts to ${languageName(targetLang)}:\n\n${numbered}`,
                 temperature: 0.2,
                 maxOutputTokens,
             });
 
-            const match = text.match(/\[[\s\S]*\]/);
-            if (!match) {
-                throw new Error('Translation service returned no JSON array');
+            let text = '';
+            let finishReason: string | undefined;
+            let usage: any;
+            for (let attempt = 0; attempt < 4; attempt++) {
+                await waitForTpmBudget(reservation);
+                try {
+                    const resp = await callModel();
+                    text = resp.text;
+                    finishReason = resp.finishReason;
+                    usage = resp.usage;
+                    const actualTokens =
+                        (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0) || reservation;
+                    recordTpmUsage(actualTokens);
+                    break;
+                } catch (err: any) {
+                    // Assume the model consumed the reservation even on failure —
+                    // pessimistic accounting so we don't undercount and re-bust.
+                    recordTpmUsage(reservation);
+                    const retryAfter = parseRetryAfterMs(err);
+                    const isRateLimit =
+                        err?.statusCode === 429 ||
+                        /rate limit|TPM|tokens per minute/i.test(err?.message ?? '');
+                    if (!isRateLimit || attempt === 3) throw err;
+                    const backoff = retryAfter ?? Math.min(15_000, 2000 * (attempt + 1));
+                    console.warn(
+                        `[translate] rate-limited, backing off ${backoff}ms (attempt ${attempt + 1})`,
+                    );
+                    await new Promise((r) => setTimeout(r, backoff));
+                }
             }
-            const parsed = JSON.parse(match[0]);
-            if (!Array.isArray(parsed) || parsed.length !== chunk.length) {
-                throw new Error(
-                    `Translation service returned ${Array.isArray(parsed) ? parsed.length : 'non-array'} items, expected ${chunk.length}`,
+
+            // Parse numbered lines: "<n>. <translation>". Robust to model
+            // preamble, blank lines, and partial (truncated) output.
+            const results: (string | undefined)[] = new Array(chunk.length);
+            for (const line of text.split(/\r?\n/)) {
+                const m = line.match(/^\s*(\d+)[.)]\s*(.*)$/);
+                if (!m) continue;
+                const idx = parseInt(m[1], 10) - 1;
+                if (idx < 0 || idx >= chunk.length) continue;
+                if (results[idx] === undefined) results[idx] = m[2].trim();
+            }
+
+            const missing = results.reduce<number[]>((acc, v, i) => {
+                if (v === undefined || v === '') acc.push(i + 1);
+                return acc;
+            }, []);
+
+            if (missing.length > 0) {
+                const diag = {
+                    finishReason,
+                    usage,
+                    maxOutputTokens,
+                    chunkSize: chunk.length,
+                    missingLines: missing,
+                    rawPreview: text.slice(0, 500),
+                };
+                console.error('[translate] incomplete output', diag);
+                const err: any = new Error(
+                    finishReason === 'length'
+                        ? `Translation truncated: missing lines ${missing.join(',')} of ${chunk.length}`
+                        : `Translation incomplete: missing lines ${missing.join(',')} of ${chunk.length}`,
                 );
+                err.diag = diag;
+                throw err;
             }
-            return parsed.map((s) => normalizeDigits(String(s)));
+
+            return results.map((s) => normalizeDigits(String(s)));
         };
 
         const translations: string[] = [];
@@ -137,6 +256,9 @@ Example output shape: ["translation1", "translation2", ...]`,
         return NextResponse.json({ translations });
     } catch (error: any) {
         console.error('Translation route error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json(
+            { error: error.message, diag: error.diag },
+            { status: 500 },
+        );
     }
 }
