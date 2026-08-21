@@ -13,7 +13,6 @@ const alternativeMealsSchema = z.object({
 
 export type AlternativeMeal = z.infer<typeof alternativeMealsSchema>['alternatives'][0];
 
-// Initialize Groq provider with fallback error check
 const getGroqProvider = () => {
     if (!process.env.GROQ_API_KEY) {
         throw new Error('GROQ_API_KEY is not defined in environment variables');
@@ -42,7 +41,7 @@ export async function generateMealDetails(mealName: string): Promise<GeneratedMe
         const groq = getGroqProvider();
 
         const { text } = await generateText({
-            model: groq('llama-3.3-70b-versatile'),
+            model: groq('openai/gpt-oss-20b'),
             system: `You are an expert chef and nutritionist. You will be given the name of a meal. 
             Provide the likely ingredients, step-by-step cooking instructions, estimated total serving calories, 
             prep/cook time in minutes, whether it is vegetarian, and estimated macronutrients (protein, carbs, fat, fiber).
@@ -98,7 +97,7 @@ export async function fetchAlternativeMeals(
         }
 
         const { text } = await generateText({
-            model: groq('llama-3.3-70b-versatile'),
+            model: groq('openai/gpt-oss-20b'),
             system: `${promptTemplate}
             
             CRITICAL INSTRUCTION: Your output MUST be ONLY valid JSON matching exactly this TypeScript interface:
@@ -145,7 +144,7 @@ export async function generate30DayPlan(category: string): Promise<MonthlyPlanDa
         const groq = getGroqProvider();
         
         const { text } = await generateText({
-            model: groq('llama-3.3-70b-versatile'),
+            model: groq('openai/gpt-oss-20b'),
             system: `You are an expert nutritionist. Create a 30-day meal plan specifically for a ${category} diet. 
             Keep meal names descriptive but concise (max 5 words). 
             Provide estimated reasonable calories for each meal.

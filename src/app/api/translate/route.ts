@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
         const numbered = texts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n');
 
         const { text } = await generateText({
-            model: groq('llama-3.3-70b-versatile'),
+            model: groq('openai/gpt-oss-20b'),
             system: `You are a professional translator. Translate the given numbered list of texts from ${languageName(sourceLang)} to ${languageName(targetLang)}.
 
 CRITICAL INSTRUCTIONS:
@@ -75,8 +75,15 @@ Example output shape: ["translation1", "translation2", ...]`,
             temperature: 0.2,
         });
 
-        const cleaned = text.trim().replace(/^```json/i, '').replace(/^```/, '').replace(/```$/i, '').trim();
-        const parsed = JSON.parse(cleaned);
+        const match = text.match(/\[[\s\S]*\]/);
+        if (!match) {
+            console.error('Groq translation returned no JSON array. Raw:', text);
+            return NextResponse.json(
+                { error: 'Translation service returned no JSON array' },
+                { status: 502 }
+            );
+        }
+        const parsed = JSON.parse(match[0]);
 
         if (!Array.isArray(parsed) || parsed.length !== texts.length) {
             console.error('Groq translation returned unexpected shape:', parsed);
