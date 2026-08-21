@@ -73,6 +73,7 @@ CRITICAL INSTRUCTIONS:
 Example output shape: ["translation1", "translation2", ...]`,
             prompt: `Translate the following ${texts.length} texts to ${languageName(targetLang)}:\n\n${numbered}`,
             temperature: 0.2,
+            maxOutputTokens: 8000,
         });
 
         const match = text.match(/\[[\s\S]*\]/);
