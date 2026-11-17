@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { cert, getApps, initializeApp, type App, type ServiceAccount } from 'firebase-admin/app';
-import { getAuth, type Auth } from 'firebase-admin/auth';
+import type { Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
 /**
@@ -59,14 +59,20 @@ function adminApp(): App {
 export function adminFirestore(): Firestore {
     if (!adminGlobals.__wtcAdminFirestore) {
         const db = getFirestore(adminApp());
-        // Match the client SDK's tolerance for undefined fields; REST keeps
-        // serverless cold starts fast (the server never uses listeners).
-        db.settings({ ignoreUndefinedProperties: true, preferRest: true });
+        // Match the client SDK's tolerance for undefined fields. (Not using
+        // `preferRest`: its REST transport ignores the emulator and looks for
+        // Google default credentials.)
+        db.settings({ ignoreUndefinedProperties: true });
         adminGlobals.__wtcAdminFirestore = db;
     }
     return adminGlobals.__wtcAdminFirestore;
 }
 
-export function adminAuth(): Auth {
+/**
+ * Loaded on demand: firebase-admin/auth pulls in jwks-rsa → jose (ESM-only,
+ * needs Node 22.12+), which the Firestore-only server paths never need.
+ */
+export async function adminAuth(): Promise<Auth> {
+    const { getAuth } = await import('firebase-admin/auth');
     return getAuth(adminApp());
 }
