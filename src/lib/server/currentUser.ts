@@ -1,8 +1,7 @@
 import 'server-only';
 
 import { randomInt } from 'node:crypto';
-import { doc, getDoc, setDoc, type DocumentData } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, doc, getDoc, setDoc, type DocumentData } from './db';
 import type { User, UserRole } from '@/types/meal';
 import {
     clearSessionCookies,

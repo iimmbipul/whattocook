@@ -1,7 +1,6 @@
 'use server';
 
-import { db } from './firebase';
-import { collection, deleteField, doc, getDocs, writeBatch, type DocumentData, type WriteBatch } from 'firebase/firestore';
+import { db, collection, deleteField, doc, getDocs, writeBatch, type DocumentData, type WriteBatch } from './server/db';
 import { authorizeAppAdmin, isAppAdmin, isSafeDocId } from './server/guards';
 import { hashSecret, isHashedSecret } from './server/password';
 

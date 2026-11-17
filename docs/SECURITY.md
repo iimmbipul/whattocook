@@ -85,7 +85,19 @@ database itself is still readable and writable by anyone (see
    asks before writing).
 5. **Do not deploy `firestore.rules` yet** — see Step 2.
 
-## Step 2 — lock down the database (needs your decision)
+## Step 2 — lock down the database (in progress)
+
+> **Status (branch `security/firebase-admin`, work in progress — do not deploy):**
+> credential choice: service-account key in `FIREBASE_SERVICE_ACCOUNT_KEY`
+> (raw or base64 JSON). Done: `firebase-admin` 14.5.0 (needs Node 22+),
+> lazy init in `src/lib/server/firebaseAdmin.ts`, and every server module now
+> reads/writes through `src/lib/server/db.ts`, an adapter with the same
+> function names as the client SDK (only import lines changed). Still to do:
+> the notification bell's custom token (item 3 below), revoking Firebase
+> sessions when a member is removed, keeping timestamps as timestamps in the
+> admin JSON editor, and re-running the emulator tests with the locked rules.
+> Deploying this branch without `FIREBASE_SERVICE_ACCOUNT_KEY` stops the app
+> from reaching Firestore.
 
 The server talks to Firestore with the Firebase *client* SDK and no user, so
 the security rules must allow unauthenticated access. The web config is public,

@@ -1,7 +1,6 @@
 import 'server-only';
 
-import { db } from './firebase';
-import { doc, getDoc, updateDoc, deleteField, setDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
+import { db, doc, getDoc, updateDoc, deleteField, setDoc, serverTimestamp, collection, getDocs } from './server/db';
 import { MealDocument, MealItem } from '@/types/meal';
 import { getCalendarConnection } from './server/calendarTokens';
 import {

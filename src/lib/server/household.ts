@@ -1,7 +1,6 @@
 import 'server-only';
 
-import { collection, doc, getDoc, getDocs, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, collection, doc, getDoc, getDocs, query, serverTimestamp, where, writeBatch } from './db';
 import { MealDocument } from '@/types/meal';
 import { syncMealCalendarAsync } from '../calendarSync';
 import { MEMBERS_COLLECTION, USERS_COLLECTION } from './currentUser';

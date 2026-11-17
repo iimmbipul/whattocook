@@ -1,7 +1,6 @@
 import 'server-only';
 
-import { db } from '../firebase';
-import { doc, getDoc, setDoc, deleteField, serverTimestamp } from 'firebase/firestore';
+import { db, doc, getDoc, setDoc, deleteField, serverTimestamp } from './db';
 
 /**
  * Where we store Google refresh tokens. Owners live in `users`,
