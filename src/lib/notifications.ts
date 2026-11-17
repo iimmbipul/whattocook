@@ -1,7 +1,6 @@
 'use server';
 
-import { db } from './firebase';
-import { addDoc, collection, doc, serverTimestamp, getDocs, query, orderBy, limit, writeBatch, arrayUnion } from 'firebase/firestore';
+import { db, addDoc, collection, doc, serverTimestamp, getDocs, query, orderBy, limit, writeBatch, arrayUnion } from './server/db';
 import { NotificationType } from '@/types/meal';
 import { authorizeHousehold, isSafeDocId } from './server/guards';
 

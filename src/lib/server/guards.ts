@@ -1,7 +1,6 @@
 import 'server-only';
 
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, doc, getDoc } from './db';
 import { actorFromUser } from '../actor';
 import type { User, UserRole } from '@/types/meal';
 import {

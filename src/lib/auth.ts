@@ -1,11 +1,8 @@
 'use server';
 
-import { db } from './firebase';
 import {
-    collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc, writeBatch, serverTimestamp,
-    setDoc, deleteDoc, updateDoc, deleteField, increment, Timestamp,
-    type DocumentData, type QueryDocumentSnapshot,
-} from 'firebase/firestore';
+    db, collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc, writeBatch, serverTimestamp, setDoc, deleteDoc, updateDoc, deleteField, increment, Timestamp, type DocumentData, type QueryDocumentSnapshot,
+} from './server/db';
 import { User, UserRole } from '@/types/meal';
 import { generate30DayPlan, MonthlyPlanDay } from './ai';
 import { resetHouseholdResponsibilities, clearMemberAssignments } from './server/household';

@@ -1,7 +1,6 @@
 'use server';
 
-import { db } from './firebase';
-import { collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, getDocs, writeBatch } from 'firebase/firestore';
+import { db, collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, getDocs, writeBatch } from './server/db';
 import { MealDocument, MealItem } from '@/types/meal';
 import { createNotification } from './notifications';
 import { syncMealCalendarAsync } from './calendarSync';
