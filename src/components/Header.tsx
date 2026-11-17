@@ -2,13 +2,12 @@
 
 import { useAuth } from './AuthProvider';
 import { logout } from '@/lib/auth';
-import { auth } from '@/lib/firebase';
-import { signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
 import { Settings, LogOut, UtensilsCrossed, ChevronDown, User as UserIcon } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { supportedLocales, localeLabels, type SupportedLocale } from '@/lib/i18n';
+import { clearDashboardCache } from '@/lib/dashboardCache';
 import NotificationBell from './NotificationBell';
 
 export default function Header() {
@@ -17,6 +16,16 @@ export default function Header() {
     const { t, locale, setLocale } = useLocale();
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Warm the pages reachable from the header so navigating to them doesn't
+    // wait on a route fetch after the click (no-op in development).
+    const role = user?.role;
+    useEffect(() => {
+        if (!role) return;
+        const routes = ['/', '/profile', '/my-plates'];
+        if (role === 'user') routes.push('/admin');
+        routes.forEach((route) => router.prefetch(route));
+    }, [role, router]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -31,8 +40,13 @@ export default function Header() {
 
     const handleLogout = async () => {
         await logout();
-        await signOut(auth).catch(() => {}); // Clear Firebase/Google auth session
+        // Clear Firebase/Google auth session. The Auth SDK is loaded on demand so
+        // it isn't part of the initial bundle of every page with a header.
+        await Promise.all([import('firebase/auth'), import('@/lib/firebaseAuth')])
+            .then(([{ signOut }, { auth }]) => signOut(auth))
+            .catch(() => {});
         localStorage.removeItem('meal_planner_user');
+        clearDashboardCache();
         router.push('/login');
     };
 

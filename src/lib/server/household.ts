@@ -27,12 +27,12 @@ function getHouseholdCollection(householdId: string): string {
 export async function getHouseholdMemberIds(householdId: string): Promise<string[]> {
     const ids: string[] = [];
 
-    const ownerSnap = await getDoc(doc(db, USERS_COLLECTION, householdId));
-    if (ownerSnap.exists()) ids.push(householdId);
+    const [ownerSnap, membersSnap] = await Promise.all([
+        getDoc(doc(db, USERS_COLLECTION, householdId)),
+        getDocs(query(collection(db, MEMBERS_COLLECTION), where('linkedUserId', '==', householdId))),
+    ]);
 
-    const membersSnap = await getDocs(
-        query(collection(db, MEMBERS_COLLECTION), where('linkedUserId', '==', householdId))
-    );
+    if (ownerSnap.exists()) ids.push(householdId);
     membersSnap.forEach(d => ids.push(d.id));
 
     return ids;

@@ -1,6 +1,6 @@
 'use server';
 
-import { db, addDoc, collection, doc, serverTimestamp, getDocs, query, orderBy, limit, writeBatch, arrayUnion } from './server/db';
+import { db, addDoc, collection, doc, serverTimestamp, getDocs, getCountFromServer, query, orderBy, limit, writeBatch, arrayUnion } from './server/db';
 import { NotificationType } from '@/types/meal';
 import { authorizeHousehold, isSafeDocId } from './server/guards';
 
@@ -97,6 +97,12 @@ export async function markNotificationsRead(
 }
 
 async function trimOldNotifications(householdId: string): Promise<void> {
+    // The collection is normally already at (or under) the cap, so check with a
+    // cheap count aggregation before downloading every notification doc — this
+    // runs on every meal write that emits a notification.
+    const total = await getCountFromServer(notificationsCollection(householdId));
+    if (total.data().count <= MAX_RETAINED) return;
+
     const snap = await getDocs(
         query(notificationsCollection(householdId), orderBy('createdAt', 'desc'))
     );

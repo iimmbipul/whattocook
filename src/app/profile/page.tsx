@@ -5,9 +5,10 @@ import { useLocale } from '@/context/LocaleContext';
 import { User as UserIcon, Mail, Phone, Hash, Shield, Users, Utensils, RefreshCw, CheckCircle2, ChefHat, Plus, X, Scale, Trash2, Calendar } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { getHouseholdDietCategory, changeDietCategory, getAllHouseholdMembers, createUser, removeHouseholdMember } from '@/lib/auth';
+import { changeDietCategory, getAllHouseholdMembers, createUser, removeHouseholdMember } from '@/lib/auth';
 import { resetHouseholdResponsibilities, getHouseholdAssignmentCounts } from '@/lib/firestore';
 import { isCalendarConnected } from '@/lib/calendarTokens';
+import { getProfileData } from '@/lib/pageData';
 
 const DIET_CATEGORIES = [
     { id: 'Healthy', icon: '🥗', desc: 'Nutritious & low guilt' },
@@ -54,11 +55,6 @@ export default function ProfilePage() {
         if (!user?.uid) return;
         isCalendarConnected(user.uid).then(setCalendarStatus).catch(() => setCalendarStatus({ connected: false }));
     };
-
-    useEffect(() => {
-        loadCalendarStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.uid]);
 
     const handleConnectCalendar = () => {
         window.location.href = '/api/calendar/oauth/start';
@@ -139,15 +135,6 @@ export default function ProfilePage() {
         setTimeout(() => setResetRespResult(null), 4000);
     };
 
-    useEffect(() => {
-        if (user?.householdId) {
-            getHouseholdDietCategory(user.householdId).then(cat => {
-                setDietCategory(cat);
-                setLoadingDiet(false);
-            });
-        }
-    }, [user]);
-
     const loadCooks = () => {
         setLoadingCooks(true);
         getAllHouseholdMembers().then((list) => {
@@ -155,14 +142,6 @@ export default function ProfilePage() {
             setLoadingCooks(false);
         });
     };
-
-    useEffect(() => {
-        if (user?.role === 'user') {
-            loadCooks();
-        } else {
-            setLoadingCooks(false);
-        }
-    }, [user]);
 
     const loadMembers = () => {
         if (!user?.householdId) return;
@@ -177,9 +156,37 @@ export default function ProfilePage() {
         }).catch(() => setLoadingMembers(false));
     };
 
+    // Initial load: calendar status, diet, members (incl. cooks) and duty counts
+    // in a single round trip. Server Actions run one at a time, so the separate
+    // calls this page used to make queued up behind each other.
+    // (loadCooks / loadMembers / loadCalendarStatus still refresh after edits.)
+    const profileHouseholdId = user?.householdId;
+    const profileUid = user?.uid;
+    const profileRole = user?.role;
     useEffect(() => {
-        loadMembers();
-    }, [user]);
+        if (!profileHouseholdId || !profileUid) return;
+        let cancelled = false;
+        getProfileData(profileHouseholdId, profileUid)
+            .then((data) => {
+                if (cancelled) return;
+                setCalendarStatus(data.calendarStatus);
+                setDietCategory(data.dietCategory);
+                setLoadingDiet(false);
+                if (profileRole === 'user') setCooks(data.members.filter((m) => m.role === 'cook'));
+                setLoadingCooks(false);
+                setMembers(data.members.filter(m => m.role !== 'cook'));
+                setAssignmentCounts(data.assignmentCounts);
+                setLoadingMembers(false);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setCalendarStatus({ connected: false });
+                setLoadingDiet(false);
+                setLoadingCooks(false);
+                setLoadingMembers(false);
+            });
+        return () => { cancelled = true; };
+    }, [profileHouseholdId, profileUid, profileRole]);
 
     const handleRemoveMember = async (uid: string, label: string) => {
         if (!confirm(`Remove ${label} from your household? Cooking duties will be redistributed evenly across the remaining members.`)) return;
