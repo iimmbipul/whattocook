@@ -1,23 +1,37 @@
 'use client';
 
 import { useAuth } from '@/components/AuthProvider';
-import Header from '@/components/Header';
+import AppShell, { PageHeader } from '@/components/AppShell';
 import { getUserMeals } from '@/lib/firestore';
 import { MealItem } from '@/types/meal';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { addDays, format } from 'date-fns';
+import { ChefHat, Leaf, UtensilsCrossed } from 'lucide-react';
+import { useLocale } from '@/context/LocaleContext';
+import { Card, EmptyState } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Segmented } from '@/components/ui/Segmented';
+import { Skeleton } from '@/components/ui/Spinner';
+
+type Entry = { date: string; mealType: string; meal: MealItem };
+type MealFilter = 'All' | 'Breakfast' | 'Lunch' | 'Dinner';
+
+const MEAL_ORDER: Record<string, number> = { Breakfast: 0, Lunch: 1, Dinner: 2 };
+const MEAL_ICON: Record<string, string> = { Breakfast: '☕', Lunch: '🥗', Dinner: '🍲' };
+
+const localDay = (d: Date) => format(d, 'yyyy-MM-dd');
 
 export default function MyPlatesPage() {
     const { user, loading } = useAuth();
     const router = useRouter();
-    const [data, setData] = useState<{
-        assigned: { date: string; mealType: string; meal: MealItem }[];
-        attending: { date: string; mealType: string; meal: MealItem }[];
-    } | null>(null);
+    const { t } = useLocale();
+    const [data, setData] = useState<{ assigned: Entry[]; attending: Entry[] } | null>(null);
     const [dataLoading, setDataLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'assigned' | 'attending'>('attending');
-    const [filterType, setFilterType] = useState<'All' | 'Breakfast' | 'Lunch' | 'Dinner'>('All');
+    const [filterType, setFilterType] = useState<MealFilter>('All');
+    const [showEarlier, setShowEarlier] = useState(false);
 
     useEffect(() => {
         if (!loading && !user) {
@@ -35,146 +49,135 @@ export default function MyPlatesPage() {
         }
     }, [user, loading, router]);
 
-    if (loading || dataLoading) {
-        return (
-            <div className="min-h-screen bg-brand-light/30 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-brand-primary"></div>
-            </div>
-        );
+    if (!loading && !user) return null;
+
+    const canCook = user?.role === 'user' || user?.role === 'member';
+    const items = (activeTab === 'attending' ? data?.attending : data?.assigned) ?? [];
+    const filtered = filterType === 'All' ? items : items.filter(item => item.mealType === filterType);
+
+    const todayStr = localDay(new Date());
+    const tomorrowStr = localDay(addDays(new Date(), 1));
+    const upcoming = filtered.filter(i => i.date >= todayStr);
+    const earlier = filtered.filter(i => i.date < todayStr);
+    const visible = showEarlier ? [...earlier, ...upcoming] : upcoming;
+
+    // Group by day, keeping breakfast → lunch → dinner order within a day.
+    const days: { date: string; entries: Entry[] }[] = [];
+    for (const entry of visible) {
+        const last = days[days.length - 1];
+        if (last && last.date === entry.date) last.entries.push(entry);
+        else days.push({ date: entry.date, entries: [entry] });
     }
+    days.forEach(d => d.entries.sort((a, b) => (MEAL_ORDER[a.mealType] ?? 9) - (MEAL_ORDER[b.mealType] ?? 9)));
 
-    if (!user || !data) return null;
-
-    const filteredList = (items: { date: string; mealType: string; meal: MealItem }[]) => {
-        if (filterType === 'All') return items;
-        return items.filter(item => item.mealType === filterType);
+    const dayLabel = (date: string) => {
+        if (date === todayStr) return t('myPlates.today');
+        if (date === tomorrowStr) return t('myPlates.tomorrow');
+        return format(new Date(`${date}T00:00:00`), 'EEEE, MMM d');
     };
 
-    const renderList = (items: { date: string; mealType: string; meal: MealItem }[]) => {
-        const filteredItems = filteredList(items);
-
-        if (filteredItems.length === 0) {
-            return (
-                <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-brand-light/20">
-                    <p className="text-brand-dark/60 text-lg">No meals found for {filterType === 'All' ? 'this section' : filterType}.</p>
-                </div>
-            );
-        }
-
-        return (
-            <div className="space-y-4">
-                {filteredItems.map((item, idx) => (
-                    <div key={idx} className="bg-white p-5 rounded-xl shadow-sm border border-brand-light/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-brand-light/20 rounded-full flex items-center justify-center text-2xl">
-                                {item.mealType === 'Breakfast' ? '☕' : item.mealType === 'Lunch' ? '🥪' : '🍽️'}
-                            </div>
-                            <div>
-                                <h3 className="font-bold text-lg text-brand-darkest">{item.meal.item_name}</h3>
-                                <div className="flex items-center gap-2 text-sm text-brand-dark/70">
-                                    <span className="font-semibold">{new Date(item.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                    <span>•</span>
-                                    <span className="uppercase tracking-wide text-xs font-bold">{item.mealType}</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="flex flex-col items-end">
-                                <span className="text-sm font-semibold text-brand-darkest">{item.meal.calories} kcal</span>
-                                {item.meal.is_vegetarian && (
-                                    <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full uppercase tracking-wide">
-                                        Veg
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        );
-    };
+    const isLoading = loading || dataLoading;
 
     return (
-        <div className="min-h-screen bg-brand-light/30">
-            <Header />
-            <main className="container mx-auto px-4 py-8">
-                <div className="mb-6">
-                    <button
-                        onClick={() => router.back()}
-                        className="flex items-center gap-2 text-brand-dark hover:text-brand-primary transition-colors font-medium"
-                    >
-                        <ArrowLeft size={20} />
-                        <span>Back</span>
-                    </button>
+        <AppShell>
+            <PageHeader title={t('myPlates.title')} subtitle={t('myPlates.subtitle')} />
+
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                {canCook ? (
+                    <Segmented
+                        label={t('myPlates.viewLabel')}
+                        value={activeTab}
+                        onChange={setActiveTab}
+                        options={[
+                            { value: 'attending', label: t('myPlates.eatingTab') },
+                            { value: 'assigned', label: t('myPlates.cookingTab') },
+                        ]}
+                    />
+                ) : <span />}
+                <Segmented
+                    label={t('myPlates.filterLabel')}
+                    size="sm"
+                    value={filterType}
+                    onChange={setFilterType}
+                    options={[
+                        { value: 'All', label: t('myPlates.all') },
+                        { value: 'Breakfast', label: t('mealCard.breakfast') },
+                        { value: 'Lunch', label: t('mealCard.lunch') },
+                        { value: 'Dinner', label: t('mealCard.dinner') },
+                    ]}
+                />
+            </div>
+
+            {isLoading ? (
+                <div className="space-y-4" aria-busy="true" aria-label={t('common.loading')}>
+                    {[0, 1, 2].map(i => (
+                        <div key={i}>
+                            <Skeleton className="mb-2 h-4 w-28" />
+                            <Card className="divide-y divide-line">
+                                {[0, 1].map(j => (
+                                    <div key={j} className="flex items-center gap-3 p-4">
+                                        <Skeleton className="h-10 w-10 rounded-xl" />
+                                        <div className="flex-1 space-y-2"><Skeleton className="h-3 w-16" /><Skeleton className="h-4 w-1/2" /></div>
+                                    </div>
+                                ))}
+                            </Card>
+                        </div>
+                    ))}
                 </div>
+            ) : (
+                <>
+                    <p className="mb-3 text-sm font-medium text-ink-muted" aria-live="polite">
+                        {activeTab === 'attending'
+                            ? t('myPlates.countMeals', { count: visible.length })
+                            : t('myPlates.countTasks', { count: visible.length })}
+                    </p>
 
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-                    <h1 className="text-3xl font-black text-brand-darkest">My Plates</h1>
-
-                    {/* Meal Type Filter */}
-                    <div className="flex bg-white rounded-lg p-1 shadow-sm border border-brand-light/20 overflow-x-auto">
-                        {(['All', 'Breakfast', 'Lunch', 'Dinner'] as const).map((type) => (
-                            <button
-                                key={type}
-                                onClick={() => setFilterType(type)}
-                                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all whitespace-nowrap ${filterType === type
-                                    ? 'bg-brand-secondary text-brand-darkest shadow-sm'
-                                    : 'text-brand-dark/50 hover:bg-brand-light/10 hover:text-brand-dark'
-                                    }`}
-                            >
-                                {type}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="flex gap-2 mb-6 bg-brand-light/10 p-1 rounded-xl w-fit">
-                    <button
-                        onClick={() => setActiveTab('attending')}
-                        className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'attending'
-                            ? 'bg-white text-brand-darkest shadow-sm'
-                            : 'text-brand-dark/60 hover:text-brand-dark'
-                            }`}
-                    >
-                        On My Menu
-                    </button>
-                    {(user.role === 'user' || user.role === 'member') && (
-                        <button
-                            onClick={() => setActiveTab('assigned')}
-                            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'assigned'
-                                ? 'bg-white text-brand-darkest shadow-sm'
-                                : 'text-brand-dark/60 hover:text-brand-dark'
-                                }`}
-                        >
-                            Cooking Duties
-                        </button>
+                    {earlier.length > 0 && (
+                        <Button variant="ghost" size="sm" className="mb-3 -ml-3" onClick={() => setShowEarlier(v => !v)} aria-expanded={showEarlier}>
+                            {showEarlier ? t('myPlates.hideEarlier') : `${t('myPlates.showEarlier')} (${earlier.length})`}
+                        </Button>
                     )}
-                </div>
 
-                {activeTab === 'attending' && (
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-xl font-bold text-brand-darkest">What I'm Eating</h2>
-                            <span className="text-sm font-bold text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-full">
-                                {filteredList(data.attending).length} Meals
-                            </span>
+                    {days.length === 0 ? (
+                        <Card>
+                            <EmptyState
+                                icon={activeTab === 'attending' ? <UtensilsCrossed size={22} /> : <ChefHat size={22} />}
+                                title={activeTab === 'attending' ? t('myPlates.emptyEating') : t('myPlates.emptyCooking')}
+                            />
+                        </Card>
+                    ) : (
+                        <div className="space-y-5">
+                            {days.map(day => (
+                                <section key={day.date} aria-label={dayLabel(day.date)}>
+                                    <h2 className="mb-2 text-sm font-semibold text-ink">
+                                        {dayLabel(day.date)}
+                                        {day.date < todayStr && <span className="font-normal text-ink-muted"> · {format(new Date(`${day.date}T00:00:00`), 'yyyy')}</span>}
+                                    </h2>
+                                    <Card className="divide-y divide-line">
+                                        {day.entries.map(entry => (
+                                            <div key={`${entry.date}-${entry.mealType}`} className="flex items-center gap-3 px-4 py-3.5">
+                                                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-muted text-lg" aria-hidden="true">
+                                                    {MEAL_ICON[entry.mealType] ?? '🍽️'}
+                                                </span>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-xs font-semibold uppercase tracking-wider text-accent-strong">
+                                                        {t(`mealCard.${entry.mealType.toLowerCase()}`)}
+                                                    </p>
+                                                    <p className="truncate text-[15px] font-medium text-ink">{entry.meal.item_name}</p>
+                                                </div>
+                                                <div className="flex shrink-0 flex-col items-end gap-1">
+                                                    <span className="text-sm font-medium text-ink-muted">{entry.meal.calories} kcal</span>
+                                                    {entry.meal.is_vegetarian && <Badge tone="success"><Leaf size={11} aria-hidden="true" /> {t('mealCard.veg')}</Badge>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </Card>
+                                </section>
+                            ))}
                         </div>
-                        {renderList(data.attending)}
-                    </div>
-                )}
-
-                {activeTab === 'assigned' && (
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-xl font-bold text-brand-darkest">What I'm Cooking</h2>
-                            <span className="text-sm font-bold text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-full">
-                                {filteredList(data.assigned).length} Tasks
-                            </span>
-                        </div>
-                        {renderList(data.assigned)}
-                    </div>
-                )}
-            </main>
-        </div>
+                    )}
+                </>
+            )}
+        </AppShell>
     );
 }

@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
-import { X, UserPlus, UserMinus, Users, CheckCircle2 } from 'lucide-react';
+import { useId, useState } from 'react';
+import { Minus, Plus } from 'lucide-react';
 import { addGuest, removeGuest } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from './AuthProvider';
 import { actorFromUser } from '@/lib/actor';
+import { Dialog } from './ui/Dialog';
+import { Avatar, Badge } from './ui/Badge';
+import { Alert } from './ui/Field';
+import { Spinner } from './ui/Spinner';
 
 interface Member {
     uid: string;
@@ -41,158 +45,114 @@ export default function AttendingMembersModal({
 }: AttendingMembersModalProps) {
     const { t } = useLocale();
     const { user: authUser } = useAuth();
-    const [busyFor, setBusyFor] = useState<string | null>(null);
-    const [successFor, setSuccessFor] = useState<{ uid: string; kind: 'added' | 'removed' } | null>(null);
+    const [busy, setBusy] = useState<'add' | 'remove' | null>(null);
+    const [status, setStatus] = useState<'added' | 'removed' | null>(null);
+    const eatingId = useId();
+    const skippingId = useId();
 
-    if (!isOpen) return null;
-
-    const isAttending = (uid: string) => {
-        const rec = attendance?.[uid];
-        return rec?.[mealType] !== false;
-    };
-
+    const isAttending = (uid: string) => attendance?.[uid]?.[mealType] !== false;
     const attendingMembers = members.filter(m => isAttending(m.uid));
-
+    const skippingMembers = members.filter(m => !isAttending(m.uid));
     const guestCount = (uid: string) => guests?.[uid]?.[mealType] ?? 0;
 
-    const handleAddGuest = async (uid: string) => {
-        if (busyFor) return;
-        if (uid !== currentUserId) return; // safety: only self can add
-        setBusyFor(uid);
-        setSuccessFor(null);
+    const changeGuests = async (kind: 'add' | 'remove') => {
+        if (busy) return;
+        setBusy(kind);
+        setStatus(null);
         try {
-            const ok = await addGuest(mealId, mealType, uid, householdId, actorFromUser(authUser));
+            // Only your own guests can be changed (enforced on the server too).
+            const ok = kind === 'add'
+                ? await addGuest(mealId, mealType, currentUserId, householdId, actorFromUser(authUser))
+                : await removeGuest(mealId, mealType, currentUserId, householdId, actorFromUser(authUser));
             if (ok) {
-                setSuccessFor({ uid, kind: 'added' });
+                setStatus(kind === 'add' ? 'added' : 'removed');
                 onRefresh();
             }
         } finally {
-            setBusyFor(null);
+            setBusy(null);
         }
     };
 
-    const handleRemoveGuest = async (uid: string) => {
-        if (busyFor) return;
-        if (uid !== currentUserId) return; // safety: only self can remove
-        setBusyFor(uid);
-        setSuccessFor(null);
-        try {
-            const ok = await removeGuest(mealId, mealType, uid, householdId, actorFromUser(authUser));
-            if (ok) {
-                setSuccessFor({ uid, kind: 'removed' });
-                onRefresh();
-            }
-        } finally {
-            setBusyFor(null);
-        }
+    const handleClose = () => {
+        setStatus(null);
+        onClose();
+    };
+
+    const row = (m: Member, eating: boolean) => {
+        const isSelf = m.uid === currentUserId;
+        const gc = guestCount(m.uid);
+        return (
+            <li key={m.uid} className="flex items-center gap-3 py-3">
+                <Avatar name={m.label} size={36} className={eating ? undefined : 'opacity-60'} />
+                <div className="min-w-0 flex-1">
+                    <div className="truncate text-[15px] font-medium text-ink">
+                        {m.label}
+                        {isSelf && <span className="font-normal text-ink-muted"> · {t('attendingModal.you')}</span>}
+                    </div>
+                    {gc > 0 && (
+                        <div className="text-xs text-ink-muted">
+                            +{gc} {gc === 1 ? t('attendingModal.guest') : t('attendingModal.guests')}
+                        </div>
+                    )}
+                </div>
+                {isSelf && eating && (
+                    <div className="flex shrink-0 items-center gap-1 rounded-xl border border-line p-1">
+                        <button
+                            type="button"
+                            onClick={() => changeGuests('remove')}
+                            disabled={!!busy || gc === 0}
+                            aria-label={t('attendingModal.removeGuest')}
+                            title={t('attendingModal.removeGuest')}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-surface-muted hover:text-ink disabled:opacity-40"
+                        >
+                            {busy === 'remove' ? <Spinner size={14} /> : <Minus size={16} aria-hidden="true" />}
+                        </button>
+                        <span className="min-w-[4.5rem] text-center text-xs font-semibold text-ink" aria-live="polite">
+                            {gc} {gc === 1 ? t('attendingModal.guest') : t('attendingModal.guests')}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => changeGuests('add')}
+                            disabled={!!busy}
+                            aria-label={t('attendingModal.addGuest')}
+                            title={t('attendingModal.addGuest')}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-accent-strong transition-colors hover:bg-accent-soft disabled:opacity-40"
+                        >
+                            {busy === 'add' ? <Spinner size={14} /> : <Plus size={16} aria-hidden="true" />}
+                        </button>
+                    </div>
+                )}
+            </li>
+        );
     };
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
-            onClick={onClose}
-        >
-            <div
-                className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-xl max-h-[85vh] flex flex-col"
-                onClick={(e) => e.stopPropagation()}
-            >
-                {/* Header */}
-                <div className="flex items-center justify-between px-5 py-4 border-b border-brand-light/40">
-                    <div className="flex items-center gap-2">
-                        <Users size={20} className="text-purple-700" />
-                        <div>
-                            <h2 className="text-base font-bold text-brand-darkest">
-                                {t('attendingModal.title')}
-                            </h2>
-                            <p className="text-xs text-brand-dark/70">{mealLabel}</p>
-                        </div>
-                    </div>
-                    <button
-                        onClick={onClose}
-                        className="p-1 rounded-full hover:bg-brand-light/30 text-brand-dark"
-                        aria-label="Close"
-                    >
-                        <X size={20} />
-                    </button>
-                </div>
+        <Dialog open={isOpen} onClose={handleClose} title={t('attendingModal.title')} description={mealLabel} closeLabel={t('common.close')}>
+            {status && (
+                <Alert tone={status === 'added' ? 'success' : 'info'} className="mb-3">
+                    {status === 'added' ? t('attendingModal.successCheckGroceries') : t('attendingModal.guestRemoved')}
+                </Alert>
+            )}
 
-                {/* Members list */}
-                <div className="overflow-y-auto flex-1 divide-y divide-brand-light/30">
-                    {attendingMembers.length === 0 ? (
-                        <div className="p-6 text-center text-sm text-brand-dark/70">
-                            {t('attendingModal.noMembers')}
-                        </div>
-                    ) : (
-                        attendingMembers.map(m => {
-                            const gc = guestCount(m.uid);
-                            const busy = busyFor === m.uid;
-                            const successHere = successFor?.uid === m.uid ? successFor.kind : null;
-                            const isSelf = m.uid === currentUserId;
-                            return (
-                                <div key={m.uid} className="px-5 py-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div className="flex items-center gap-3 min-w-0">
-                                            <div className="w-9 h-9 rounded-full bg-brand-light/40 flex items-center justify-center text-sm font-semibold text-brand-darkest shrink-0">
-                                                {m.label.charAt(0).toUpperCase()}
-                                            </div>
-                                            <div className="min-w-0">
-                                                <div className="text-sm font-semibold text-brand-darkest truncate">
-                                                    {m.label}
-                                                </div>
-                                                {gc > 0 && (
-                                                    <div className="text-xs text-brand-dark/70">
-                                                        +{gc} {gc === 1 ? t('attendingModal.guest') : t('attendingModal.guests')}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        {isSelf && (
-                                            <div className="flex items-center gap-2 shrink-0">
-                                                {gc > 0 && (
-                                                    <button
-                                                        onClick={() => handleRemoveGuest(m.uid)}
-                                                        disabled={busy}
-                                                        aria-label={t('attendingModal.removeGuest')}
-                                                        title={t('attendingModal.removeGuest')}
-                                                        className="p-2 rounded-lg text-xs font-semibold bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 disabled:opacity-60"
-                                                    >
-                                                        <UserMinus size={14} />
-                                                    </button>
-                                                )}
-                                                <button
-                                                    onClick={() => handleAddGuest(m.uid)}
-                                                    disabled={busy}
-                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-100 hover:bg-purple-100 disabled:opacity-60"
-                                                >
-                                                    {busy ? (
-                                                        <span className="animate-spin">⌛</span>
-                                                    ) : (
-                                                        <UserPlus size={14} />
-                                                    )}
-                                                    {t('attendingModal.addGuest')}
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
-                                    {successHere && isSelf && (
-                                        <div className={`mt-2 flex items-start gap-2 text-xs rounded-lg px-3 py-2 border ${successHere === 'added'
-                                            ? 'bg-green-50 border-green-200 text-green-800'
-                                            : 'bg-brand-light/30 border-brand-light text-brand-darkest'
-                                            }`}>
-                                            <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-                                            <span>
-                                                {successHere === 'added'
-                                                    ? t('attendingModal.successCheckGroceries')
-                                                    : t('attendingModal.guestRemoved')}
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })
-                    )}
-                </div>
-            </div>
-        </div>
+            <section aria-labelledby={eatingId}>
+                <h3 id={eatingId} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-muted">
+                    {t('attendingModal.eatingSection')} <Badge tone="success">{attendingMembers.length}</Badge>
+                </h3>
+                {attendingMembers.length === 0 ? (
+                    <p className="py-4 text-sm text-ink-muted">{t('attendingModal.noMembers')}</p>
+                ) : (
+                    <ul className="divide-y divide-line">{attendingMembers.map(m => row(m, true))}</ul>
+                )}
+            </section>
+
+            {skippingMembers.length > 0 && (
+                <section aria-labelledby={skippingId} className="mt-4 border-t border-line pt-4">
+                    <h3 id={skippingId} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-muted">
+                        {t('attendingModal.skippingSection')} <Badge tone="danger">{skippingMembers.length}</Badge>
+                    </h3>
+                    <ul className="divide-y divide-line">{skippingMembers.map(m => row(m, false))}</ul>
+                </section>
+            )}
+        </Dialog>
     );
 }

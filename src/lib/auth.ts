@@ -656,6 +656,12 @@ export async function getMemberCount(): Promise<number> {
     }
 }
 
+/** Name shown for a household member: their display name, else the email's local part. */
+function displayLabel(data: DocumentData): string {
+    const name = typeof data.displayName === 'string' ? data.displayName.trim() : '';
+    return name || String(data.email ?? '').split('@')[0];
+}
+
 /**
  * Get all household members (Users + Members + Cooks)
  * Returns a list of potential assignees for responsibility
@@ -685,7 +691,7 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
                 uid: ownerDocSnap.id,
                 email: data.email,
                 role: 'user',
-                label: data.email.split('@')[0],
+                label: displayLabel(data),
                 phoneNumber: data.phoneNumber
             });
         }
@@ -699,7 +705,7 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
                         uid: docSnap.id,
                         email: data.email,
                         role: role,
-                        label: data.email.split('@')[0],
+                        label: displayLabel(data),
                         phoneNumber: data.phoneNumber
                     });
                 }

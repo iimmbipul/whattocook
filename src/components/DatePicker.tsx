@@ -1,51 +1,56 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { format, addDays, isSameDay } from 'date-fns';
+import { useLocale } from '@/context/LocaleContext';
+import { cn } from '@/lib/cn';
 
 interface DatePickerProps {
     selectedDate: Date;
     onDateSelect: (date: Date) => void;
 }
 
+/** Horizontal strip of the next 14 days. */
 const DatePicker = ({ selectedDate, onDateSelect }: DatePickerProps) => {
-    // Generate 14 days starting from today
-    const dates = Array.from({ length: 14 }, (_, i) => addDays(new Date(), i));
+    const { t } = useLocale();
+    const today = new Date();
+    const dates = Array.from({ length: 14 }, (_, i) => addDays(today, i));
+    const selectedRef = useRef<HTMLButtonElement>(null);
+
+    // Keep the selected day visible when it changes (e.g. late in the strip).
+    useEffect(() => {
+        selectedRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }, [selectedDate]);
 
     return (
-        <div className="flex flex-col items-center justify-center p-8 bg-brand-light/30 rounded-3xl min-h-[200px]">
-            <div className="flex space-x-3 overflow-x-auto pb-4 scrollbar-hide bg-white p-6 rounded-[40px] shadow-sm max-w-full border border-brand-light">
+        <div role="group" aria-label={t('dashboard.dayPicker')} className="-mx-4 sm:mx-0">
+            <div className="flex snap-x scroll-px-4 gap-2 overflow-x-auto px-4 py-1 scrollbar-hide sm:scroll-px-0.5 sm:px-0.5">
                 {dates.map((date, index) => {
                     const isSelected = isSameDay(date, selectedDate);
-
+                    const isToday = index === 0;
                     return (
                         <button
-                            key={index}
+                            key={date.toDateString()}
+                            ref={isSelected ? selectedRef : undefined}
+                            type="button"
                             onClick={() => onDateSelect(date)}
-                            className={`flex flex-col items-center min-w-[65px] transition-all duration-300 rounded-full py-4 
-                ${isSelected ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-brand-light/20 text-brand-dark hover:bg-brand-light/40'}`}
+                            aria-pressed={isSelected}
+                            aria-label={`${isToday ? `${t('nav.today')}, ` : ''}${format(date, 'EEEE, MMMM d')}`}
+                            className={cn(
+                                'flex h-[68px] w-[52px] shrink-0 snap-start flex-col items-center justify-center gap-1 rounded-2xl border transition-colors duration-150',
+                                isSelected
+                                    ? 'border-accent bg-accent text-white shadow-raised'
+                                    : 'border-line bg-surface text-ink hover:border-line-strong hover:bg-surface-muted',
+                            )}
                         >
-                            {/* Day Name (S, M, T, W...) */}
-                            <span className="text-xs font-medium mb-4 uppercase opacity-80">
-                                {format(date, 'eeeeee')}
+                            <span className={cn('text-[11px] font-semibold uppercase tracking-wide', isSelected ? 'text-white/85' : 'text-ink-muted')}>
+                                {format(date, 'EEE')}
                             </span>
-
-                            {/* Day Number with Ring Effect */}
-                            <div className="relative flex items-center justify-center w-12 h-12">
-                                {isSelected && (
-                                    <>
-                                        {/* The Circular Progress-style border */}
-                                        <div className="absolute inset-0 border-2 border-white/30 rounded-full"></div>
-                                        <div className="absolute inset-0 border-2 border-t-white border-r-white border-b-transparent border-l-transparent rounded-full rotate-45"></div>
-                                        {/* Small Dot */}
-                                        <div className="absolute -left-1 bottom-2 w-1.5 h-1.5 bg-brand-secondary rounded-full border border-brand-primary"></div>
-                                    </>
-                                )}
-
-                                <span className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-brand-darkest'}`}>
-                                    {format(date, 'dd')}
-                                </span>
-                            </div>
+                            <span className="text-lg font-bold leading-none">{format(date, 'd')}</span>
+                            <span
+                                className={cn('h-1 w-1 rounded-full', isToday ? (isSelected ? 'bg-white' : 'bg-accent') : 'bg-transparent')}
+                                aria-hidden="true"
+                            />
                         </button>
                     );
                 })}

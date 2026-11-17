@@ -1,64 +1,61 @@
 "use client";
 
 import React from 'react';
-import { format, addDays, isSameDay } from 'date-fns';
+import { format, addDays, isSameDay, isToday } from 'date-fns';
+import { cn } from '@/lib/cn';
 
 interface MultiDatePickerProps {
     selectedDates: Date[];
     onDateToggle: (date: Date) => void;
 }
 
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Month grid for picking several days of the current month. */
 const MultiDatePicker = ({ selectedDates, onDateToggle }: MultiDatePickerProps) => {
-    // Generate dates for the entire current month
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    const daysInMonth = endOfMonth.getDate();
-
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
     const dates = Array.from({ length: daysInMonth }, (_, i) => addDays(startOfMonth, i));
+    // Monday-first offset for the first day of the month.
+    const leading = (startOfMonth.getDay() + 6) % 7;
 
-    const isDateSelected = (date: Date) => {
-        return selectedDates.some(d => isSameDay(d, date));
-    };
+    const isDateSelected = (date: Date) => selectedDates.some(d => isSameDay(d, date));
 
     return (
-        <div className="flex flex-col items-center justify-center py-6 px-4 bg-brand-light/30 rounded-3xl min-h-[180px]">
-            <div className="flex space-x-3 overflow-x-auto pb-4 scrollbar-hide bg-white p-6 rounded-[40px] shadow-sm max-w-full border border-brand-light w-full">
-                {dates.map((date, index) => {
-                    const isSelected = isDateSelected(date);
-
+        <div role="group" aria-label={`Select days in ${format(startOfMonth, 'MMMM yyyy')}`}>
+            <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-ink">{format(startOfMonth, 'MMMM yyyy')}</p>
+                <p className="text-xs text-ink-muted">{selectedDates.length} selected</p>
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-center" aria-hidden="true">
+                {WEEKDAYS.map(d => (
+                    <span key={d} className="py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{d}</span>
+                ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+                {Array.from({ length: leading }, (_, i) => <span key={`pad-${i}`} />)}
+                {dates.map((date) => {
+                    const selected = isDateSelected(date);
+                    const current = isToday(date);
                     return (
                         <button
-                            key={index}
+                            key={date.toDateString()}
+                            type="button"
                             onClick={() => onDateToggle(date)}
-                            className={`flex flex-col items-center min-w-[65px] transition-all duration-300 rounded-full py-4 shrink-0
-                ${isSelected ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20 scale-105' : 'bg-brand-light/20 text-brand-dark hover:bg-brand-light/40'}`}
+                            aria-pressed={selected}
+                            aria-label={format(date, 'EEEE, MMMM d')}
+                            className={cn(
+                                'relative flex aspect-square items-center justify-center rounded-xl text-sm font-semibold transition-colors duration-150 sm:aspect-auto sm:h-11',
+                                selected ? 'bg-accent text-white' : 'text-ink hover:bg-surface-muted',
+                                current && !selected && 'ring-1 ring-inset ring-accent',
+                            )}
                         >
-                            {/* Day Name (S, M, T, W...) */}
-                            <span className="text-xs font-medium mb-4 uppercase opacity-80">
-                                {format(date, 'eee')}
-                            </span>
-
-                            {/* Day Number with Ring Effect */}
-                            <div className="relative flex items-center justify-center w-12 h-12">
-                                {isSelected && (
-                                    <>
-                                        {/* The Circular Progress-style border */}
-                                        <div className="absolute inset-0 border-2 border-white/30 rounded-full"></div>
-                                        {/* Small Dot */}
-                                        <div className="absolute -right-1 top-0 w-2 h-2 bg-brand-secondary rounded-full border border-brand-primary"></div>
-                                    </>
-                                )}
-
-                                <span className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-brand-darkest'}`}>
-                                    {format(date, 'dd')}
-                                </span>
-                            </div>
+                            {format(date, 'd')}
                         </button>
                     );
                 })}
             </div>
-            <p className="text-xs text-brand-dark/50 mt-4 font-medium">Click dates to select/deselect multiple</p>
         </div>
     );
 };

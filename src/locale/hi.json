@@ -18,14 +18,21 @@
         "footerHint": "पहली बार? /admin पर एडमिन से अपना ईमेल जुड़वाएं",
         "googleNoEmail": "Google ईमेल प्राप्त नहीं हो सका। कृपया पुनः प्रयास करें।",
         "googleNotRegistered": "आपका Google खाता पंजीकृत नहीं है। एडमिन से अपना ईमेल जुड़वाएं।",
-        "googleError": "साइन इन विफल हुआ। कृपया पुनः प्रयास करें।"
+        "googleError": "साइन इन विफल हुआ। कृपया पुनः प्रयास करें।",
+        "orDivider": "या",
+        "phoneLabel": "फ़ोन नंबर",
+        "pinLabel": "पिन",
+        "cookSubmit": "साइन इन करें"
     },
     "dashboard": {
         "loading": "लोड हो रहा है...",
         "noMealPlan": "के लिए कोई मील प्लान उपलब्ध नहीं है",
         "today": "📅 आज",
         "tomorrow": "📅 कल",
-        "totalCalories": "कुल: {{calories}} कैलोरी"
+        "totalCalories": "कुल: {{calories}} कैलोरी",
+        "dayPicker": "दिन चुनें",
+        "emptyTitle": "इस दिन की कोई भोजन योजना नहीं",
+        "caloriesTotal": "कुल {{calories}} kcal"
     },
     "mealCard": {
         "breakfast": "नाश्ता",
@@ -43,7 +50,16 @@
         "imEating": "मैं खाऊँगा/खाऊँगी",
         "instructions": "निर्देश",
         "totalCalorie": "कुल कैलोरी",
-        "kcalLeft": "{{amount}} बचे"
+        "kcalLeft": "{{amount}} बचे",
+        "eating": "खा रहा/रही हूँ",
+        "skipping": "नहीं खा रहा/रही",
+        "swap": "डिश बदलें",
+        "recipeSteps": "बनाने की विधि",
+        "prepTime": "{{minutes}} मिनट",
+        "eatingCount": "{{count}} खा रहे हैं",
+        "cookedBy": "शेफ़",
+        "noChef": "अभी कोई शेफ़ नहीं",
+        "you": "आप"
     },
     "attendingModal": {
         "title": "इनके लिए बना रहे हैं",
@@ -54,7 +70,10 @@
         "removeGuest": "मेहमान हटाएँ",
         "successCheckGroceries": "मेहमान सफलतापूर्वक जोड़ा गया। कृपया किराने का सामान देख लें।",
         "guestRemoved": "मेहमान हटा दिया गया।",
-        "onlySelfCanAddGuest": "आप केवल अपने नाम के अंतर्गत मेहमान जोड़ सकते हैं।"
+        "onlySelfCanAddGuest": "आप केवल अपने नाम के अंतर्गत मेहमान जोड़ सकते हैं।",
+        "eatingSection": "खा रहे हैं",
+        "skippingSection": "नहीं खा रहे",
+        "you": "आप"
     },
     "editMeal": {
         "editTitle": "संपादित करें",
@@ -103,47 +122,47 @@
         "successMessage": "{{count}} भोजन सफलतापूर्वक अपडेट हो गए!"
     },
     "adminEditor": {
-        "title": "🗄️ रॉ डेटा एडिटर",
+        "title": "रॉ डेटा एडिटर",
         "description": "सभी डेटा को JSON फॉर्मेट में देखें और बदलें।",
         "selectCollection": "कलेक्शन चुनें",
         "dailyMenuOption": "दैनिक मेनू (भोजन)",
         "usersOption": "उपयोगकर्ता",
         "categoryTemplatesOption": "कलेक्शन टेम्पलेट्स (AI मेनू)",
         "loadingPlaceholder": "डेटा लोड हो रहा है...",
-        "refreshButton": "🔄 डेटा रिफ्रेश करें",
-        "updateButton": "💾 डेटाबेस अपडेट करें",
+        "refreshButton": "डेटा रिफ्रेश करें",
+        "updateButton": "डेटाबेस अपडेट करें",
         "processingButton": "प्रोसेस हो रहा है...",
-        "warningText": "⚠️ अपडेट बॉक्स में मौजूद डेटा से बिल्कुल मेल खाएगा। गायब IDs डेटाबेस से हटा दी जाएंगी।"
+        "warningText": "अपडेट बॉक्स में मौजूद डेटा से बिल्कुल मेल खाएगा। गायब IDs डेटाबेस से हटा दी जाएंगी।"
     },
     "admin": {
-        "userManagementTitle": "👤 यूजर मैनेजमेंट",
+        "userManagementTitle": "यूजर मैनेजमेंट",
         "userManagementDesc": "नए उपयोगकर्ता बनाएं और भूमिकाएं असाइन करें",
         "emailLabel": "ईमेल पता",
         "passwordLabel": "पासवर्ड",
         "passwordHint": "कम से कम 6 अक्षर होने चाहिए",
         "passwordPlaceholder": "न्यूनतम 6 अक्षर",
         "roleLabel": "यूजर की भूमिका",
-        "roleMember": "👤 सदस्य - भोजन संपादित कर सकते हैं (एडमिन नहीं)",
-        "roleOwner": "🔑 मालिक - पूर्ण पहुँच (एडमिन)",
-        "roleCook": "👨‍🍳 रसोइया - केवल देख सकते हैं",
+        "roleMember": "सदस्य - भोजन संपादित कर सकते हैं (एडमिन नहीं)",
+        "roleOwner": "मालिक - पूर्ण पहुँच (एडमिन)",
+        "roleCook": "रसोइया - केवल देख सकते हैं",
         "phoneLabel": "फोन नंबर",
         "phonePlaceholder": "+1234567890",
         "phoneHint": "कॉल बटन के लिए उपयोग। खाली छोड़ने पर घर के मालिक का नंबर इस्तेमाल होगा।",
-        "createButton": "✨ यूजर बनाएं",
+        "createButton": "यूजर बनाएं",
         "creatingButton": "यूजर बनाया जा रहा है...",
         "userCreatedSuccess": "यूजर सफलतापूर्वक बनाया गया! ID: {{userId}}",
-        "mealDateTitle": "📅 भोजन तारीख प्रबंधन",
+        "mealDateTitle": "भोजन तारीख प्रबंधन",
         "mealDateDesc": "सभी भोजन की तारीखें वर्तमान महीने और साल में अपडेट करें",
         "howItWorksTitle": "यह कैसे काम करता है:",
         "howItWorks1": "Firestore से सभी भोजन लाता है",
         "howItWorks2": "प्रत्येक भोजन की तारीख वर्तमान वर्ष और महीने में अपडेट करता है (दिन सुरक्षित रहता है)",
         "howItWorks3": "सप्ताह के दिन को भी अपडेट करता है",
         "howItWorks4": "उदाहरण: 2025-01-15 → 2026-02-15",
-        "updateDatesButton": "🔄 सभी तारीखें वर्तमान महीने और साल में अपडेट करें",
+        "updateDatesButton": "सभी तारीखें वर्तमान महीने और साल में अपडेट करें",
         "updatingDatesButton": "तारीखें अपडेट हो रही हैं...",
-        "updateDatesWarning": "⚠️ यह क्रिया सभी भोजन दस्तावेज़ों को बदल देगी। यदि आवश्यक हो तो बैकअप सुनिश्चित करें।",
+        "updateDatesWarning": "यह क्रिया सभी भोजन दस्तावेज़ों को बदल देगी। यदि आवश्यक हो तो बैकअप सुनिश्चित करें।",
         "confirmUpdateDates": "यह सभी भोजन तारीखें वर्तमान महीने में अपडेट करेगा। क्या जारी रखें?",
-        "assignTitle": "👑 दैनिक जिम्मेदारियां असाइन करें",
+        "assignTitle": "दैनिक जिम्मेदारियां असाइन करें",
         "assignDesc": "एक या अधिक तारीखें चुनें और सदस्यों को खाना बनाने के लिए असाइन करें",
         "backButton": "← डैशबोर्ड पर वापस"
     },
@@ -168,5 +187,37 @@
         "guestRemoved": "{{actor}} ने {{mealType}} ({{mealName}}) से मेहमान हटाया",
         "respChanged": "{{actor}} ने {{slot}} की जिम्मेदारी {{toName}} को दी",
         "respBulkChanged": "{{actor}} ने {{count}} दिनों की खाना पकाने की जिम्मेदारियां अपडेट कीं"
+    },
+    "common": {
+        "close": "बंद करें",
+        "cancel": "रद्द करें",
+        "confirm": "पुष्टि करें",
+        "save": "सहेजें",
+        "back": "वापस",
+        "retry": "फिर से कोशिश करें",
+        "copy": "कॉपी करें",
+        "copied": "कॉपी हो गया",
+        "loading": "लोड हो रहा है…"
+    },
+    "nav": {
+        "today": "आज",
+        "myPlates": "मेरी थाली",
+        "profile": "प्रोफ़ाइल",
+        "admin": "एडमिन",
+        "account": "खाता मेनू",
+        "language": "भाषा",
+        "logout": "लॉग आउट",
+        "mainNav": "मुख्य नेविगेशन",
+        "skipToContent": "सामग्री पर जाएँ",
+        "houseCode": "घर कोड",
+        "housePin": "घर पिन"
+    },
+    "myPlates": {
+        "title": "मेरी थाली",
+        "eatingTab": "मैं खा रहा/रही हूँ",
+        "cookingTab": "मैं बना रहा/रही हूँ",
+        "all": "सभी",
+        "today": "आज",
+        "tomorrow": "कल"
     }
 }

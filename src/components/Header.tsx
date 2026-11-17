@@ -1,21 +1,52 @@
 'use client';
 
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useId } from 'react';
+import { CalendarDays, LogOut, Settings, User as UserIcon, UtensilsCrossed, type LucideIcon } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { logout } from '@/lib/auth';
-import { useRouter } from 'next/navigation';
-import { useState, useRef, useEffect } from 'react';
-import { Settings, LogOut, UtensilsCrossed, ChevronDown, User as UserIcon } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { supportedLocales, localeLabels, type SupportedLocale } from '@/lib/i18n';
 import { clearDashboardCache } from '@/lib/dashboardCache';
+import { cn } from '@/lib/cn';
 import NotificationBell from './NotificationBell';
+import { Avatar } from './ui/Badge';
+import { usePopover } from './ui/usePopover';
+import { CopyValue } from './ui/CopyValue';
+
+interface NavItem {
+    href: string;
+    label: string;
+    icon: LucideIcon;
+}
+
+/** Top-level destinations; Admin only for household owners. */
+export function useNavItems(): NavItem[] {
+    const { user } = useAuth();
+    const { t } = useLocale();
+    const items: NavItem[] = [
+        { href: '/', label: t('nav.today'), icon: CalendarDays },
+        { href: '/my-plates', label: t('nav.myPlates'), icon: UtensilsCrossed },
+        { href: '/profile', label: t('nav.profile'), icon: UserIcon },
+    ];
+    if (user?.role === 'user') items.push({ href: '/admin', label: t('nav.admin'), icon: Settings });
+    return items;
+}
+
+export function displayNameOf(user: { displayName?: string | null; email?: string | null }): string {
+    return user.displayName?.trim() || user.email?.split('@')[0] || '';
+}
 
 export default function Header() {
     const { user } = useAuth();
     const router = useRouter();
+    const pathname = usePathname();
     const { t, locale, setLocale } = useLocale();
-    const [isProfileOpen, setIsProfileOpen] = useState(false);
-    const dropdownRef = useRef<HTMLDivElement>(null);
+    const nav = useNavItems();
+    const { open: menuOpen, setOpen: setMenuOpen, toggle: toggleMenu, containerRef: menuContainerRef, triggerRef: menuTriggerRef } = usePopover();
+    const menuId = useId();
+    const languageId = useId();
 
     // Warm the pages reachable from the header so navigating to them doesn't
     // wait on a route fetch after the click (no-op in development).
@@ -26,17 +57,6 @@ export default function Header() {
         if (role === 'user') routes.push('/admin');
         routes.forEach((route) => router.prefetch(route));
     }, [role, router]);
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setIsProfileOpen(false);
-            }
-        };
-
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
 
     const handleLogout = async () => {
         await logout();
@@ -51,145 +71,147 @@ export default function Header() {
     };
 
     if (!user) return null;
+    const name = displayNameOf(user);
 
     return (
-        <header className="sticky top-0 z-50 w-full border-b border-brand-light/10 bg-brand-darkest/95 backdrop-blur-md text-brand-light pt-[env(safe-area-inset-top)]">
-            <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-
-                {/* Logo Section */}
-                <div
-                    className="flex items-center gap-2.5 cursor-pointer group"
-                    onClick={() => router.push('/')}
-                >
-                    <div className="bg-brand-light text-brand-darkest p-2 rounded-xl shadow-lg transition-all group-hover:rotate-12">
-                        <UtensilsCrossed size={20} strokeWidth={2.5} />
-                    </div>
-                    <span className="text-xl font-black tracking-tight italic text-brand-light">
-                        WT<span className="text-brand-secondary">C</span>
+        <header className="sticky top-0 z-40 border-b border-line bg-surface/90 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-[backdrop-filter]:bg-surface/75">
+            <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:h-16 sm:px-6">
+                <Link href="/" className="flex shrink-0 items-center gap-2 rounded-lg" aria-label="WhatToCook — home">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-darkest text-brand-light">
+                        <UtensilsCrossed size={17} strokeWidth={2.25} aria-hidden="true" />
                     </span>
-                </div>
+                    <span className="text-[17px] font-bold tracking-tight text-ink">
+                        WhatTo<span className="text-accent">Cook</span>
+                    </span>
+                </Link>
 
-                {/* Right Side */}
-                <div className="flex items-center gap-3">
+                <nav aria-label={t('nav.mainNav')} className="ml-4 hidden items-center gap-1 sm:flex">
+                    {nav.map(item => {
+                        const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+                        return (
+                            <Link
+                                key={item.href}
+                                href={item.href}
+                                aria-current={active ? 'page' : undefined}
+                                className={cn(
+                                    'rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
+                                    active ? 'bg-accent-soft text-accent-strong' : 'text-ink-muted hover:bg-surface-muted hover:text-ink',
+                                )}
+                            >
+                                {item.label}
+                            </Link>
+                        );
+                    })}
+                </nav>
 
-                    {/* Language Selector */}
-                    <div className="relative flex items-center">
-                        <span className="text-base mr-1 hidden sm:inline">🌐</span>
-                        <select
-                            value={locale}
-                            onChange={(e) => setLocale(e.target.value as SupportedLocale)}
-                            className="appearance-none bg-brand-light/10 hover:bg-brand-light/20 border border-brand-light/20 text-brand-light text-xs font-semibold rounded-full pl-2 pr-6 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-secondary/50 cursor-pointer transition-all"
-                            aria-label={t('header.selectLanguage')}
+                <div className="ml-auto flex items-center gap-1">
+                    <NotificationBell />
+
+                    <div className="relative" ref={menuContainerRef}>
+                        <button
+                            ref={menuTriggerRef}
+                            type="button"
+                            onClick={toggleMenu}
+                            aria-expanded={menuOpen}
+                            aria-controls={menuId}
+                            aria-label={t('nav.account')}
+                            className="flex h-11 items-center gap-2 rounded-full pl-1 pr-1 transition-colors hover:bg-surface-muted sm:pr-3"
                         >
-                            {supportedLocales.map((loc) => (
-                                <option key={loc} value={loc} className="bg-brand-darkest text-brand-light">
-                                    {localeLabels[loc]}
-                                </option>
-                            ))}
-                        </select>
-                        {/* Custom arrow */}
-                        <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-brand-light/60">
-                            <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
-                                <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                        </div>
-                    </div>
+                            <Avatar name={name} photoURL={user.photoURL} size={32} />
+                            <span className="hidden max-w-[10rem] truncate text-sm font-semibold text-ink sm:block">{name.split(' ')[0]}</span>
+                        </button>
 
-                    {/* Action Hub */}
-                    <nav className="flex items-center gap-2">
-                        <NotificationBell />
-
-                        {user.role === 'user' && (
-                            <button
-                                onClick={() => router.push('/admin')}
-                                className="p-2.5 hover:bg-brand-light/10 rounded-full transition-colors group text-brand-light"
-                                title={t('header.adminSettings')}
+                        {menuOpen && (
+                            <div
+                                id={menuId}
+                                className="absolute right-0 top-full z-50 mt-2 w-[min(18rem,calc(100vw-2rem))] animate-pop-in rounded-2xl border border-line bg-surface p-2 shadow-overlay"
                             >
-                                <Settings size={20} className="group-hover:rotate-45 transition-transform duration-300" />
-                            </button>
-                        )}
-
-                        {/* Profile Dropdown */}
-                        <div className="relative ml-2" ref={dropdownRef}>
-                            <button
-                                onClick={() => setIsProfileOpen(!isProfileOpen)}
-                                className={`flex items-center gap-3 pl-3 pr-4 py-1.5 ${isProfileOpen ? 'bg-brand-light/20' : 'bg-brand-light/10'} hover:bg-brand-light/20 rounded-full transition-all border border-brand-light/10`}
-                            >
-                                <div className="text-right hidden sm:block">
-                                    <div className="text-xs text-brand-secondary font-bold uppercase tracking-wider">{t('header.welcome')}</div>
-                                    <div className="text-sm font-bold text-brand-light">{user.displayName?.split(' ')[0] || user.email?.split('@')[0]}</div>
+                                <div className="flex items-center gap-3 px-2 py-2">
+                                    <Avatar name={name} photoURL={user.photoURL} size={40} />
+                                    <div className="min-w-0">
+                                        <div className="truncate text-sm font-semibold text-ink">{name}</div>
+                                        {user.email && <div className="truncate text-xs text-ink-muted">{user.email}</div>}
+                                    </div>
                                 </div>
-                                <div className="w-8 h-8 bg-brand-secondary text-brand-darkest rounded-full flex items-center justify-center font-bold shadow-sm overflow-hidden border border-brand-secondary/50">
-                                    {user.photoURL ? (
-                                        <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                                    ) : (
-                                        user.displayName?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase()
-                                    )}
+
+                                {user.houseCode && user.housePin && (
+                                    <div className="space-y-1.5 px-1 pb-2">
+                                        <CopyValue label={t('nav.houseCode')} value={user.houseCode} />
+                                        <CopyValue label={t('nav.housePin')} value={user.housePin} />
+                                    </div>
+                                )}
+
+                                <div className="border-t border-line px-2 py-2.5">
+                                    <label htmlFor={languageId} className="mb-1 block text-xs font-medium text-ink-muted">
+                                        {t('nav.language')}
+                                    </label>
+                                    <select
+                                        id={languageId}
+                                        value={locale}
+                                        onChange={(e) => setLocale(e.target.value as SupportedLocale)}
+                                        className="h-10 w-full cursor-pointer rounded-lg border border-line bg-surface px-2.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/15"
+                                    >
+                                        {supportedLocales.map(loc => (
+                                            <option key={loc} value={loc}>{localeLabels[loc].replace('🌐 ', '')}</option>
+                                        ))}
+                                    </select>
                                 </div>
-                            </button>
 
-                            {/* Dropdown Menu */}
-                            <div className={`absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-brand-light/20 overflow-hidden transition-all transform origin-top-right z-50 ${isProfileOpen ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}`}>
-                                <div className="p-2 space-y-1">
-                                    {user.houseCode && user.housePin && (
-                                        <>
-                                            <div className="px-3 py-2 text-xs">
-                                                <div className="text-gray-500 font-semibold mb-1 uppercase tracking-wider">Your Team Setup</div>
-                                                <div className="flex justify-between items-center bg-gray-50 p-1.5 rounded-md mb-1">
-                                                    <span className="text-gray-500">ID:</span>
-                                                    <span className="font-mono font-bold text-indigo-600">{user.houseCode}</span>
-                                                </div>
-                                                <div className="flex justify-between items-center bg-gray-50 p-1.5 rounded-md">
-                                                    <span className="text-gray-500">PIN:</span>
-                                                    <span className="font-mono font-bold text-indigo-600">{user.housePin}</span>
-                                                </div>
-                                            </div>
-                                            <div className="h-px bg-brand-light/20 my-1" />
-                                        </>
-                                    )}
+                                <div className="border-t border-line pt-1">
                                     <button
-                                        onClick={() => {
-                                            setIsProfileOpen(false);
-                                            router.push('/profile');
-                                        }}
-                                        className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-brand-light/20 rounded-lg transition-colors"
+                                        type="button"
+                                        onClick={() => { setMenuOpen(false); handleLogout(); }}
+                                        className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-semibold text-danger transition-colors hover:bg-danger-soft"
                                     >
-                                        <UserIcon size={16} />
-                                        <span>{t('header.profile') || 'Profile'}</span>
-                                    </button>
-
-                                    <div className="h-px bg-brand-light/20 my-1" />
-
-                                    <button
-                                        onClick={() => {
-                                            setIsProfileOpen(false);
-                                            router.push('/my-plates');
-                                        }}
-                                        className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-brand-light/20 rounded-lg transition-colors"
-                                    >
-                                        <UtensilsCrossed size={16} />
-                                        <span>{t('header.myPlates')}</span>
-                                    </button>
-                                    
-                                    <div className="h-px bg-brand-light/20 my-1" />
-
-                                    <button
-                                        onClick={() => {
-                                            setIsProfileOpen(false);
-                                            handleLogout();
-                                        }}
-                                        className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                    >
-                                        <LogOut size={16} />
-                                        <span>{t('header.logout')}</span>
+                                        <LogOut size={17} aria-hidden="true" />
+                                        {t('nav.logout')}
                                     </button>
                                 </div>
                             </div>
-                        </div>
-
-                    </nav>
+                        )}
+                    </div>
                 </div>
             </div>
         </header>
+    );
+}
+
+/** Bottom navigation for phones (the header nav is hidden below `sm`). */
+export function MobileTabBar() {
+    const { user } = useAuth();
+    const pathname = usePathname();
+    const { t } = useLocale();
+    const nav = useNavItems();
+    if (!user) return null;
+
+    return (
+        <nav
+            aria-label={t('nav.mainNav')}
+            className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 pb-safe backdrop-blur-md sm:hidden"
+        >
+            <ul className="mx-auto flex max-w-md">
+                {nav.map(item => {
+                    const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+                    const Icon = item.icon;
+                    return (
+                        <li key={item.href} className="flex-1">
+                            <Link
+                                href={item.href}
+                                aria-current={active ? 'page' : undefined}
+                                className={cn(
+                                    'flex h-16 flex-col items-center justify-center gap-1 text-[11px] font-semibold transition-colors',
+                                    active ? 'text-accent-strong' : 'text-ink-muted hover:text-ink',
+                                )}
+                            >
+                                <span className={cn('flex h-7 w-12 items-center justify-center rounded-full transition-colors', active && 'bg-accent-soft')}>
+                                    <Icon size={20} strokeWidth={active ? 2.4 : 2} aria-hidden="true" />
+                                </span>
+                                {item.label}
+                            </Link>
+                        </li>
+                    );
+                })}
+            </ul>
+        </nav>
     );
 }

@@ -1,44 +1,109 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens.
+ *
+ * Brand: the original sage palette (brand-*) stays the identity. The semantic
+ * tokens below are what components use, so colours, surfaces and states stay
+ * consistent across screens. Text tokens meet WCAG AA (4.5:1) on both
+ * `surface` and `canvas`.
+ */
 @theme {
+  /* Brand palette (unchanged) */
   --color-brand-darkest: #2f3e46;
   --color-brand-dark: #354f52;
   --color-brand-primary: #52796f;
   --color-brand-secondary: #84a98c;
   --color-brand-light: #cad2c5;
+
+  /* Surfaces */
+  --color-canvas: #f4f6f3;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef2ed;
+  --color-line: #dfe5de;
+  --color-line-strong: #c5cfc4;
+
+  /* Text */
+  --color-ink: #1f2b2f;
+  --color-ink-muted: #56645f;
+  --color-ink-subtle: #66746e;
+
+  /* Accent (primary actions, selection) */
+  --color-accent: #52796f;
+  --color-accent-hover: #42675d;
+  --color-accent-strong: #3f6359;
+  --color-accent-soft: #e5eeea;
+
+  /* Status */
+  --color-success: #2f7a4f;
+  --color-success-soft: #e9f5ee;
+  --color-warning: #94550a;
+  --color-warning-soft: #fdf4e3;
+  --color-danger: #b42318;
+  --color-danger-hover: #912018;
+  --color-danger-soft: #fdf0ee;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(20 32 28 / 0.05), 0 1px 1px rgb(20 32 28 / 0.03);
+  --shadow-raised: 0 4px 12px -2px rgb(20 32 28 / 0.08), 0 2px 4px rgb(20 32 28 / 0.04);
+  --shadow-overlay: 0 24px 48px -12px rgb(20 32 28 / 0.25), 0 4px 12px rgb(20 32 28 / 0.08);
+
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-pop-in: pop-in 180ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  --animate-sheet-up: sheet-up 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes sheet-up {
+    from { opacity: 0.6; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 }
 
-* {
-  box-sizing: border-box;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
 
-}
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
 
-body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  /* One consistent, visible focus indicator for keyboard users. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 
-html {
-  scroll-behavior: smooth;
-}
+  ::selection {
+    background-color: var(--color-accent-soft);
+  }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #f1f1f1;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  /* Respect reduced-motion preferences everywhere. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer utilities {
@@ -49,5 +114,10 @@ html {
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Space for the iOS home indicator under fixed bars and sheets. */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }

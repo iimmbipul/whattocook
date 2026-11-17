@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/AuthProvider";
@@ -7,6 +7,7 @@ import { LocaleProvider } from "@/context/LocaleContext";
 const inter = Inter({
   subsets: ["latin"],
   display: "swap",
+  variable: "--font-inter",
 });
 
 export const metadata: Metadata = {
@@ -14,12 +15,11 @@ export const metadata: Metadata = {
   description: "Manage your daily meals with ease",
 };
 
-
-export const viewport = {
+// No maximum-scale: users must be able to pinch-zoom (WCAG 1.4.4).
+export const viewport: Viewport = {
   themeColor: "#2f3e46",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover",
 };
 
@@ -29,8 +29,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={inter.className} suppressHydrationWarning={true}>
+    <html lang="en" className={inter.variable}>
+      <body className="font-sans" suppressHydrationWarning={true}>
         <LocaleProvider>
           <AuthProvider>{children}</AuthProvider>
         </LocaleProvider>

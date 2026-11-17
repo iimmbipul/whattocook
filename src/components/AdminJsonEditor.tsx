@@ -1,8 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Database } from 'lucide-react';
 import { adminLoadCollection, adminReplaceCollection } from '@/lib/adminData';
 import { useLocale } from '@/context/LocaleContext';
+import { Section } from './ui/Card';
+import { Alert, Field, Select, TextArea } from './ui/Field';
+import { Button } from './ui/Button';
+import { useConfirm } from './ui/ConfirmDialog';
 
 type CollectionName = 'menu_templates' | 'users' | 'category_templates' | 'meals_T6GggZ7CrPSSoY9uEydL' | 'households/T6GggZ7CrPSSoY9uEydL/meals';
 
@@ -12,6 +17,7 @@ export default function AdminJsonEditor() {
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const { t } = useLocale();
+    const { confirm, dialog } = useConfirm();
 
     useEffect(() => {
         fetchData();
@@ -40,9 +46,13 @@ export default function AdminJsonEditor() {
     };
 
     const handleUpdate = async () => {
-        if (!confirm(`Are you sure you want to overwrite the "${selectedCollection}" collection with this data? This cannot be undone.`)) {
-            return;
-        }
+        const ok = await confirm({
+            title: `Overwrite “${selectedCollection}”?`,
+            message: 'The whole collection is replaced with the JSON in the editor. This cannot be undone.',
+            confirmLabel: 'Overwrite collection',
+            tone: 'danger',
+        });
+        if (!ok) return;
 
         setLoading(true);
         setMessage(null);
@@ -51,7 +61,7 @@ export default function AdminJsonEditor() {
             const result = await adminReplaceCollection(selectedCollection, jsonData);
             if (!result.ok) throw new Error(result.error);
 
-            setMessage({ type: 'success', text: 'Database updated successfully!' });
+            setMessage({ type: 'success', text: 'Database updated successfully.' });
             fetchData();
 
         } catch (error) {
@@ -63,63 +73,39 @@ export default function AdminJsonEditor() {
     };
 
     return (
-        <div className="bg-white rounded-2xl shadow-xl p-8 mt-8">
-            <div className="mb-6">
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">{t('adminEditor.title')}</h2>
-                <p className="text-gray-600">{t('adminEditor.description')}</p>
-            </div>
-
-            <div className="mb-4">
-                <label className="block text-sm font-semibold text-gray-700 mb-2">{t('adminEditor.selectCollection')}</label>
-                <select
-                    value={selectedCollection}
-                    onChange={(e) => setSelectedCollection(e.target.value as CollectionName)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                >
-                    <option value="menu_templates">{t('adminEditor.dailyMenuOption')}</option>
-                    <option value="users">{t('adminEditor.usersOption')}</option>
-                    <option value="category_templates">{t('adminEditor.categoryTemplatesOption')}</option>
-                    <option value="meals_T6GggZ7CrPSSoY9uEydL">meals_T6GggZ7CrPSSoY9uEydL</option>
-                    <option value="households/T6GggZ7CrPSSoY9uEydL/meals">households/T6GggZ7CrPSSoY9uEydL/meals</option>
-                </select>
-            </div>
-
-            {message && (
-                <div className={`mb-4 px-4 py-3 rounded-lg border ${message.type === 'success' ? 'bg-green-100 border-green-400 text-green-700' : 'bg-red-100 border-red-400 text-red-700'
-                    }`}>
-                    {message.type === 'success' ? '✅' : '❌'} {message.text}
-                </div>
-            )}
-
+        <Section icon={<Database size={18} />} tone="danger" title={t('adminEditor.title')} description={t('adminEditor.description')}>
+            {dialog}
             <div className="space-y-4">
-                <textarea
-                    value={jsonData}
-                    onChange={(e) => setJsonData(e.target.value)}
-                    className="w-full h-96 font-mono text-sm p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                    placeholder={t('adminEditor.loadingPlaceholder')}
-                    spellCheck={false}
-                />
+                <Field label={t('adminEditor.selectCollection')}>
+                    <Select value={selectedCollection} onChange={(e) => setSelectedCollection(e.target.value as CollectionName)}>
+                        <option value="menu_templates">{t('adminEditor.dailyMenuOption')}</option>
+                        <option value="users">{t('adminEditor.usersOption')}</option>
+                        <option value="category_templates">{t('adminEditor.categoryTemplatesOption')}</option>
+                        <option value="meals_T6GggZ7CrPSSoY9uEydL">meals_T6GggZ7CrPSSoY9uEydL</option>
+                        <option value="households/T6GggZ7CrPSSoY9uEydL/meals">households/T6GggZ7CrPSSoY9uEydL/meals</option>
+                    </Select>
+                </Field>
 
-                <div className="flex gap-4">
-                    <button
-                        onClick={fetchData}
-                        disabled={loading}
-                        className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 px-4 rounded-lg transition-all duration-200"
-                    >
-                        {t('adminEditor.refreshButton')}
-                    </button>
-                    <button
-                        onClick={handleUpdate}
-                        disabled={loading}
-                        className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
-                    >
-                        {loading ? t('adminEditor.processingButton') : t('adminEditor.updateButton')}
-                    </button>
+                {message && <Alert tone={message.type === 'success' ? 'success' : 'error'}>{message.text}</Alert>}
+
+                <Field label="JSON">
+                    <TextArea
+                        value={jsonData}
+                        onChange={(e) => setJsonData(e.target.value)}
+                        className="h-96 font-mono text-[13px]"
+                        placeholder={t('adminEditor.loadingPlaceholder')}
+                        spellCheck={false}
+                    />
+                </Field>
+
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <Button variant="secondary" onClick={fetchData} disabled={loading}>{t('adminEditor.refreshButton')}</Button>
+                    <Button variant="danger" onClick={handleUpdate} loading={loading} loadingText={t('adminEditor.processingButton')}>
+                        {t('adminEditor.updateButton')}
+                    </Button>
                 </div>
-                <p className="text-xs text-gray-500 text-center">
-                    {t('adminEditor.warningText')}
-                </p>
+                <p className="text-xs text-ink-muted">{t('adminEditor.warningText')}</p>
             </div>
-        </div>
+        </Section>
     );
 }

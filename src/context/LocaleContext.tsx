@@ -7,7 +7,8 @@ import en from '@/locale/en.json';
 import hi from '@/locale/hi.json';
 import or_ from '@/locale/or.json';
 
-type LocaleData = typeof en;
+// Translations may be partial: any key missing in hi/or falls back to English.
+type LocaleData = Record<string, unknown>;
 
 const localeMap: Record<SupportedLocale, LocaleData> = { en, hi, or: or_ };
 
@@ -28,15 +29,14 @@ const LocaleContext = createContext<LocaleContextValue>({
 /**
  * Resolve a dot-notation key like "header.welcome" from a nested object.
  */
-function resolvePath(obj: Record<string, unknown>, path: string): string {
+function resolvePath(obj: Record<string, unknown>, path: string): string | undefined {
     const parts = path.split('.');
     let current: unknown = obj;
     for (const part of parts) {
-        if (current === null || typeof current !== 'object') return path;
+        if (current === null || typeof current !== 'object') return undefined;
         current = (current as Record<string, unknown>)[part];
     }
-    if (typeof current === 'string') return current;
-    return path;
+    return typeof current === 'string' ? current : undefined;
 }
 
 /**
@@ -60,6 +60,11 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
         }
     }, []);
 
+    // Keep <html lang> in sync so screen readers use the right voice.
+    useEffect(() => {
+        document.documentElement.lang = locale;
+    }, [locale]);
+
     const setLocale = useCallback((newLocale: SupportedLocale) => {
         setLocaleState(newLocale);
         localStorage.setItem(STORAGE_KEY, newLocale);
@@ -69,7 +74,8 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
         (key: string, vars?: Record<string, string | number>): string => {
             const data = localeMap[locale] as Record<string, unknown>;
             const fallback = localeMap[DEFAULT_LOCALE] as Record<string, unknown>;
-            const resolved = resolvePath(data, key) || resolvePath(fallback, key) || key;
+            // Missing in the current language → English → the key itself.
+            const resolved = resolvePath(data, key) ?? resolvePath(fallback, key) ?? key;
             return interpolate(resolved, vars);
         },
         [locale]

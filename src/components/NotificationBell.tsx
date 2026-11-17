@@ -1,49 +1,39 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, Check, UserPlus, UserMinus, UserX, UserCheck, Utensils, Users } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { useEffect, useId, useMemo } from 'react';
+import { Bell, BellOff, UserPlus, UserMinus, UserX, UserCheck, Utensils, Users } from 'lucide-react';
+import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from './AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotifications } from '@/hooks/useNotifications';
 import { markNotificationsRead } from '@/lib/notifications';
 import { NotificationDoc } from '@/types/meal';
-
-const mealTypeIcon = (t?: string) => {
-    switch (t) {
-        case 'breakfast': return '☕';
-        case 'lunch': return '🥪';
-        case 'dinner': return '🍽️';
-        default: return '';
-    }
-};
+import { cn } from '@/lib/cn';
+import { usePopover } from './ui/usePopover';
 
 function TypeIcon({ type }: { type: NotificationDoc['type'] }) {
-    const cls = 'w-4 h-4';
+    const props = { size: 16, 'aria-hidden': true } as const;
     switch (type) {
-        case 'meal_updated': return <Utensils className={cls} />;
-        case 'meal_skipped': return <UserX className={cls} />;
-        case 'meal_unskipped': return <UserCheck className={cls} />;
-        case 'guest_added': return <UserPlus className={cls} />;
-        case 'guest_removed': return <UserMinus className={cls} />;
+        case 'meal_updated': return <Utensils {...props} />;
+        case 'meal_skipped': return <UserX {...props} />;
+        case 'meal_unskipped': return <UserCheck {...props} />;
+        case 'guest_added': return <UserPlus {...props} />;
+        case 'guest_removed': return <UserMinus {...props} />;
         case 'responsibility_changed':
         case 'responsibility_bulk_changed':
-            return <Users className={cls} />;
-        default: return <Bell className={cls} />;
+            return <Users {...props} />;
+        default: return <Bell {...props} />;
     }
 }
 
-function typeAccentClass(type: NotificationDoc['type']): string {
+function typeTone(type: NotificationDoc['type']): string {
     switch (type) {
-        case 'meal_updated': return 'bg-brand-primary/10 text-brand-primary';
-        case 'meal_skipped': return 'bg-red-50 text-red-600';
-        case 'meal_unskipped': return 'bg-green-50 text-green-700';
-        case 'guest_added': return 'bg-purple-50 text-purple-700';
-        case 'guest_removed': return 'bg-brand-light/40 text-brand-darkest';
+        case 'meal_skipped': return 'bg-danger-soft text-danger';
+        case 'meal_unskipped': return 'bg-success-soft text-success';
         case 'responsibility_changed':
         case 'responsibility_bulk_changed':
-            return 'bg-amber-50 text-amber-700';
-        default: return 'bg-brand-light/30 text-brand-dark';
+            return 'bg-warning-soft text-warning';
+        default: return 'bg-accent-soft text-accent-strong';
     }
 }
 
@@ -112,23 +102,25 @@ function useMessage() {
     };
 }
 
+/** "Wed, Nov 18" for the meal date a notification is about. */
+function formatMealDate(date: string): string {
+    const d = new Date(`${date}T00:00:00`);
+    return Number.isNaN(d.getTime()) ? date : format(d, 'EEE, MMM d');
+}
+
 export default function NotificationBell() {
     const { user } = useAuth();
     const { t } = useLocale();
     const { notifications, unreadCount } = useNotifications(user?.householdId, user?.uid);
-    const [open, setOpen] = useState(false);
-    const dropdownRef = useRef<HTMLDivElement>(null);
+    const {
+        open: popoverOpen,
+        toggle: togglePopover,
+        containerRef: popoverContainerRef,
+        triggerRef: popoverTriggerRef,
+    } = usePopover();
+    const panelId = useId();
+    const titleId = useId();
     const buildMessage = useMessage();
-
-    useEffect(() => {
-        const onClick = (e: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-                setOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', onClick);
-        return () => document.removeEventListener('mousedown', onClick);
-    }, []);
 
     const unreadIds = useMemo(
         () => notifications.filter(n => user?.uid && !n.readBy.includes(user.uid)).map(n => n.id),
@@ -137,97 +129,92 @@ export default function NotificationBell() {
 
     // When the panel opens, mark visible unread notifications as read.
     useEffect(() => {
-        if (!open || !user?.householdId || !user?.uid || unreadIds.length === 0) return;
+        if (!popoverOpen || !user?.householdId || !user?.uid || unreadIds.length === 0) return;
         markNotificationsRead(user.householdId, user.uid, unreadIds).catch(() => {});
-    }, [open, unreadIds, user?.householdId, user?.uid]);
+    }, [popoverOpen, unreadIds, user?.householdId, user?.uid]);
 
     if (!user) return null;
 
+    const bellLabel = unreadCount > 0
+        ? `${t('notifications.ariaBell')} (${t('notifications.newCount', { count: unreadCount })})`
+        : t('notifications.ariaBell');
+
     return (
-        <div className="relative" ref={dropdownRef}>
+        <div className="relative" ref={popoverContainerRef}>
             <button
-                onClick={() => setOpen(v => !v)}
-                className="relative p-2.5 hover:bg-brand-light/10 rounded-full transition-colors text-brand-light"
-                aria-label={t('notifications.ariaBell')}
+                ref={popoverTriggerRef}
+                type="button"
+                onClick={togglePopover}
+                aria-expanded={popoverOpen}
+                aria-controls={panelId}
+                aria-label={bellLabel}
                 title={t('notifications.ariaBell')}
+                className="relative flex h-11 w-11 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-surface-muted hover:text-ink"
             >
-                <Bell size={20} />
+                <Bell size={20} aria-hidden="true" />
                 {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-brand-darkest">
+                    <span
+                        className="absolute right-1.5 top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-surface bg-danger px-1 text-[10px] font-bold text-white"
+                        aria-hidden="true"
+                    >
                         {unreadCount > 99 ? '99+' : unreadCount}
                     </span>
                 )}
             </button>
 
-            {/* Mobile-first backdrop: click-away target on small screens where the panel becomes a sheet */}
-            {open && (
-                <button
-                    type="button"
-                    aria-label="Close notifications"
-                    onClick={() => setOpen(false)}
-                    className="sm:hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]"
-                />
-            )}
-
-            <div
-                className={`
-                    z-50 bg-white shadow-xl border border-brand-light/20 overflow-hidden transition-all transform
-                    fixed left-2 right-2 top-[calc(4rem+env(safe-area-inset-top))] rounded-xl origin-top
-                    sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:inset-x-auto sm:w-96 sm:max-w-[26rem] sm:origin-top-right
-                    ${open ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}
-                `}
-            >
-                <div className="px-4 py-3 border-b border-brand-light/20 flex items-center justify-between">
-                    <span className="text-sm font-bold text-brand-darkest uppercase tracking-wide">
-                        {t('notifications.title')}
-                    </span>
-                    {unreadCount > 0 && (
-                        <span className="text-xs font-semibold text-brand-primary bg-brand-primary/10 px-2 py-0.5 rounded-full">
-                            {t('notifications.newCount', { count: unreadCount })}
-                        </span>
+            {popoverOpen && (
+                <div
+                    id={panelId}
+                    role="region"
+                    aria-labelledby={titleId}
+                    className={cn(
+                        'z-50 animate-pop-in overflow-hidden rounded-2xl border border-line bg-surface shadow-overlay',
+                        'fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top))]',
+                        'sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96',
                     )}
-                </div>
+                >
+                    <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                        <h2 id={titleId} className="text-sm font-semibold text-ink">{t('notifications.title')}</h2>
+                        {unreadCount > 0 && (
+                            <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent-strong">
+                                {t('notifications.newCount', { count: unreadCount })}
+                            </span>
+                        )}
+                    </div>
 
-                <div className="max-h-[70vh] sm:max-h-[70vh] overflow-y-auto divide-y divide-brand-light/20 overscroll-contain">
-                    {notifications.length === 0 ? (
-                        <div className="px-4 py-10 text-center text-sm text-brand-dark/70">
-                            <Check size={20} className="mx-auto mb-2 text-brand-light" />
-                            {t('notifications.empty')}
-                        </div>
-                    ) : (
-                        notifications.map(n => {
-                            const isUnread = user.uid && !n.readBy.includes(user.uid);
-                            return (
-                                <div
-                                    key={n.id}
-                                    className={`px-4 py-3 flex gap-3 transition-colors ${isUnread ? 'bg-brand-primary/5' : ''}`}
-                                >
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${typeAccentClass(n.type)}`}>
-                                        <TypeIcon type={n.type} />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-sm text-brand-darkest leading-snug">
-                                            {mealTypeIcon(n.mealType) && (
-                                                <span className="mr-1">{mealTypeIcon(n.mealType)}</span>
-                                            )}
-                                            {buildMessage(n)}
-                                        </p>
-                                        <div className="mt-1 flex items-center gap-2 text-[11px] text-brand-dark/60">
-                                            <span>
-                                                {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                    <div className="max-h-[min(70dvh,32rem)] overflow-y-auto overscroll-contain">
+                        {notifications.length === 0 ? (
+                            <div className="flex flex-col items-center px-6 py-10 text-center">
+                                <BellOff size={22} className="mb-2 text-ink-subtle" aria-hidden="true" />
+                                <p className="text-sm text-ink-muted">{t('notifications.empty')}</p>
+                            </div>
+                        ) : (
+                            <ul className="divide-y divide-line">
+                                {notifications.map(n => {
+                                    const isUnread = !n.readBy.includes(user.uid);
+                                    return (
+                                        <li key={n.id} className={cn('flex gap-3 px-4 py-3', isUnread && 'bg-accent-soft/40')}>
+                                            <span className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full', typeTone(n.type))}>
+                                                <TypeIcon type={n.type} />
                                             </span>
-                                            {n.date && <span>· {n.date}</span>}
-                                        </div>
-                                    </div>
-                                    {isUnread && (
-                                        <span className="w-2 h-2 mt-2 rounded-full bg-brand-primary shrink-0" />
-                                    )}
-                                </div>
-                            );
-                        })
-                    )}
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-sm leading-snug text-ink">{isUnread && <span className="sr-only">New: </span>}{buildMessage(n)}</p>
+                                                <p className="mt-1 text-xs text-ink-muted">
+                                                    {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                                                    {n.date && <> · {formatMealDate(n.date)}</>}
+                                                </p>
+                                            </div>
+                                            {isUnread && (
+                                                <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-accent" aria-hidden="true" />
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 }
