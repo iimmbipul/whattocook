@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { CalendarDays, KeyRound, RefreshCw, Copy as CopyIcon, UserPlus, Wrench } from 'lucide-react';
 import { createUser, getAllHouseholdMembers } from '@/lib/auth';
 import { updateMealDatesToCurrentMonth } from '@/lib/firestore';
 import AdminJsonEditor from '@/components/AdminJsonEditor';
@@ -9,14 +10,21 @@ import { getAdminCapabilities, migrateStoredCredentials } from '@/lib/adminData'
 import { UserRole } from '@/types/meal';
 import BulkResponsibilityManager from '@/components/BulkResponsibilityManager';
 import MultiDatePicker from '@/components/MultiDatePicker';
-import { format, isSameDay } from 'date-fns';
+import { isSameDay } from 'date-fns';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/components/AuthProvider';
+import AppShell, { PageHeader } from '@/components/AppShell';
+import { Section } from '@/components/ui/Card';
+import { Alert, Field, Select, TextInput } from '@/components/ui/Field';
+import { Button } from '@/components/ui/Button';
+import { PageLoader } from '@/components/ui/Spinner';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 export default function AdminPage() {
     const router = useRouter();
     const { t } = useLocale();
     const { user, loading: authLoading } = useAuth();
+    const { confirm, dialog } = useConfirm();
 
     const [formData, setFormData] = useState({
         email: '',
@@ -34,12 +42,11 @@ export default function AdminPage() {
 
     const [selectedDates, setSelectedDates] = useState<Date[]>([new Date()]);
     const [members, setMembers] = useState<{ uid: string; email: string; role: string; label: string }[]>([]);
-    const [loadingMembers, setLoadingMembers] = useState(true);
 
     // Shared-template tools and the raw DB editor are for app admins only
     // (ADMIN_EMAILS); the server enforces this, the flag just hides the UI.
     const [appAdmin, setAppAdmin] = useState(false);
-    const [credentialMigration, setCredentialMigration] = useState<{ busy: boolean; message: string }>({ busy: false, message: '' });
+    const [credentialMigration, setCredentialMigration] = useState<{ busy: boolean; message: string; ok?: boolean }>({ busy: false, message: '' });
 
     // Guard: only 'user' (owner) role can access admin
     useEffect(() => {
@@ -51,7 +58,6 @@ export default function AdminPage() {
         // Load members list once access is confirmed
         getAllHouseholdMembers().then((list) => {
             setMembers(list);
-            setLoadingMembers(false);
         });
         getAdminCapabilities().then(c => setAppAdmin(c.appAdmin)).catch(() => setAppAdmin(false));
     }, [user, authLoading, router]);
@@ -102,9 +108,13 @@ export default function AdminPage() {
     };
 
     const handleUpdateMealDates = async () => {
-        if (!confirm(t('admin.confirmUpdateDates'))) {
-            return;
-        }
+        const ok = await confirm({
+            title: t('admin.updateDatesButton'),
+            message: t('admin.confirmUpdateDates'),
+            confirmLabel: t('admin.updateDatesButton'),
+            tone: 'danger',
+        });
+        if (!ok) return;
 
         setMealUpdateLoading(true);
         setMealUpdateError('');
@@ -114,7 +124,7 @@ export default function AdminPage() {
             const result = await updateMealDatesToCurrentMonth();
 
             if (result.success) {
-                setMealUpdateSuccess(`✅ Successfully updated ${result.updated} meals to current month!`);
+                setMealUpdateSuccess(`Updated ${result.updated} meals to the current month.`);
             } else {
                 setMealUpdateError(result.error || 'Failed to update meal dates');
             }
@@ -125,305 +135,188 @@ export default function AdminPage() {
         }
     };
 
+    const handleCopyDailyMenu = async () => {
+        const ok = await confirm({
+            title: 'Copy daily menu to templates?',
+            message: 'Existing templates with the same day IDs are overwritten.',
+            confirmLabel: 'Copy to templates',
+            tone: 'danger',
+        });
+        if (!ok) return;
+        setMealUpdateLoading(true);
+        setMealUpdateError('');
+        setMealUpdateSuccess('');
+        try {
+            const { copyDailyMenuToTemplates } = await import('@/lib/firestore');
+            const result = await copyDailyMenuToTemplates();
+            if (result.success) {
+                setMealUpdateSuccess(`Copied ${result.copied} meals to templates.`);
+            } else {
+                setMealUpdateError(result.error || 'Failed to copy templates');
+            }
+        } catch (e: any) {
+            setMealUpdateError(e.message || 'Failed to copy templates');
+        } finally {
+            setMealUpdateLoading(false);
+        }
+    };
+
     const handleMigrateCredentials = async () => {
         setCredentialMigration({ busy: true, message: '' });
         try {
             const preview = await migrateStoredCredentials(true);
             if (!preview.ok) {
-                setCredentialMigration({ busy: false, message: `❌ ${preview.error ?? 'Migration failed'}` });
+                setCredentialMigration({ busy: false, ok: false, message: preview.error ?? 'Migration failed' });
                 return;
             }
             if (preview.migrated === 0) {
-                setCredentialMigration({ busy: false, message: `✅ Nothing to migrate (${preview.alreadyHashed} already hashed, ${preview.skipped} skipped).` });
+                setCredentialMigration({ busy: false, ok: true, message: `Nothing to migrate (${preview.alreadyHashed} already hashed, ${preview.skipped} skipped).` });
                 return;
             }
-            if (!confirm(`Hash ${preview.migrated} stored password/PIN record(s) and delete their plaintext? This cannot be undone.`)) {
+            const ok = await confirm({
+                title: `Hash ${preview.migrated} stored credential${preview.migrated === 1 ? '' : 's'}?`,
+                message: 'Plaintext passwords and PINs are replaced with salted hashes and deleted. This cannot be undone.',
+                confirmLabel: 'Hash credentials',
+                tone: 'danger',
+            });
+            if (!ok) {
                 setCredentialMigration({ busy: false, message: '' });
                 return;
             }
             const result = await migrateStoredCredentials(false);
             setCredentialMigration({
                 busy: false,
+                ok: result.ok,
                 message: result.ok
-                    ? `✅ Hashed ${result.migrated} record(s); ${result.alreadyHashed} were already hashed; ${result.skipped} skipped (no usable value).`
-                    : `❌ ${result.error ?? 'Migration failed'}`,
+                    ? `Hashed ${result.migrated} record(s); ${result.alreadyHashed} were already hashed; ${result.skipped} skipped (no usable value).`
+                    : result.error ?? 'Migration failed',
             });
         } catch (err) {
-            setCredentialMigration({ busy: false, message: `❌ ${err instanceof Error ? err.message : 'Migration failed'}` });
+            setCredentialMigration({ busy: false, ok: false, message: err instanceof Error ? err.message : 'Migration failed' });
         }
     };
 
+    if (authLoading || !user || user.role !== 'user') {
+        return <PageLoader label={t('common.loading')} />;
+    }
+
+    const isCook = formData.role === 'cook';
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50 py-12 px-4">
-            <div className="container mx-auto max-w-2xl space-y-8">
+        <AppShell>
+            {dialog}
+            <PageHeader title={t('nav.admin')} subtitle={t('admin.userManagementDesc')} />
 
-                {/* User Management Section */}
-                <div className="bg-white rounded-2xl shadow-xl p-8">
-                    <div className="mb-8">
-                        <h1 className="text-3xl font-bold text-gray-800 mb-2">{t('admin.userManagementTitle')}</h1>
-                        <p className="text-gray-600">{t('admin.userManagementDesc')}</p>
-                    </div>
+            <div className="space-y-4">
+                {/* Add people */}
+                <Section icon={<UserPlus size={18} />} title={t('admin.userManagementTitle')}>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        {error && <Alert tone="error">{error}</Alert>}
+                        {success && <Alert tone="success">{success}</Alert>}
 
-                    {error && (
-                        <div className="mb-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-                            ❌ {error}
-                        </div>
-                    )}
-
-                    {success && (
-                        <div className="mb-6 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg">
-                            ✅ {success}
-                        </div>
-                    )}
-
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div>
-                            <label htmlFor="role" className="block text-sm font-semibold text-gray-700 mb-2">
-                                {t('admin.roleLabel')} <span className="text-red-500">*</span>
-                            </label>
-                            <select
-                                id="role"
-                                value={formData.role}
-                                onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
-                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                required
-                            >
+                        <Field label={t('admin.roleLabel')} required>
+                            <Select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}>
                                 <option value="member">{t('admin.roleMember')}</option>
                                 {appAdmin && <option value="user">{t('admin.roleOwner')}</option>}
                                 <option value="cook">{t('admin.roleCook')}</option>
-                            </select>
-                        </div>
+                            </Select>
+                        </Field>
 
-                        {formData.role !== 'cook' && (
+                        {!isCook ? (
                             <>
-                                <div>
-                                    <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-2">
-                                        {t('admin.emailLabel')} <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        id="email"
-                                        type="email"
-                                        value={formData.email}
-                                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                        required
-                                        placeholder="user@example.com"
-                                    />
-                                </div>
-                                <div>
-                                    <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-2">
-                                        {t('admin.passwordLabel')} <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        id="password"
-                                        type="password"
-                                        value={formData.password}
-                                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                        required
-                                        placeholder={t('admin.passwordPlaceholder')}
-                                        minLength={6}
-                                    />
-                                    <p className="mt-1 text-sm text-gray-500">{t('admin.passwordHint')}</p>
-                                </div>
+                                <Field label={t('admin.emailLabel')} required>
+                                    <TextInput type="email" autoComplete="off" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} placeholder="name@example.com" />
+                                </Field>
+                                <Field label={t('admin.passwordLabel')} required hint={t('admin.passwordHint')}>
+                                    <TextInput type="password" autoComplete="new-password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} placeholder={t('admin.passwordPlaceholder')} minLength={6} />
+                                </Field>
+                                <Field label={t('admin.phoneLabel')} hint={t('admin.phoneHint')}>
+                                    <TextInput type="tel" inputMode="tel" value={formData.phoneNumber} onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })} placeholder={t('admin.phonePlaceholder')} />
+                                </Field>
+                            </>
+                        ) : (
+                            <>
+                                <Field label="Cook’s phone number" required>
+                                    <TextInput type="tel" inputMode="tel" value={formData.phoneNumber} onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })} placeholder="+919876543210" />
+                                </Field>
+                                <Field label="Login PIN" required hint="4–6 digits, used with the phone number to log in.">
+                                    <TextInput type="password" inputMode="numeric" autoComplete="new-password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} placeholder="••••" />
+                                </Field>
                             </>
                         )}
 
-                        {formData.role === 'cook' && (
-                            <>
-                                <div>
-                                    <label htmlFor="phoneNumber" className="block text-sm font-semibold text-gray-700 mb-2">
-                                        Cook Phone Number <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        id="phoneNumber"
-                                        type="tel"
-                                        value={formData.phoneNumber}
-                                        onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                        placeholder="+1234567890"
-                                        required={formData.role === 'cook'}
-                                    />
-                                </div>
-                                <div>
-                                    <label htmlFor="pin" className="block text-sm font-semibold text-gray-700 mb-2">
-                                        Cook Login PIN <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        id="pin"
-                                        type="password"
-                                        value={formData.password}
-                                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                        placeholder="e.g. 1234"
-                                        required={formData.role === 'cook'}
-                                    />
-                                </div>
-                            </>
-                        )}
-
-                        {formData.role !== 'cook' && (
-                            <div>
-                                <label htmlFor="phoneNumber" className="block text-sm font-semibold text-gray-700 mb-2">
-                                    {t('admin.phoneLabel')}
-                                </label>
-                                <input
-                                    id="phoneNumber"
-                                    type="tel"
-                                    value={formData.phoneNumber}
-                                    onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                    placeholder={t('admin.phonePlaceholder')}
-                                />
-                                <p className="mt-1 text-sm text-gray-500">{t('admin.phoneHint')}</p>
-                            </div>
-                        )}
-
-                        <div className="pt-4">
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
-                            >
-                                {loading ? t('admin.creatingButton') : t('admin.createButton')}
-                            </button>
+                        <div className="flex justify-end pt-1">
+                            <Button type="submit" loading={loading} loadingText={t('admin.creatingButton')} className="w-full sm:w-auto">
+                                {t('admin.createButton')}
+                            </Button>
                         </div>
                     </form>
-                </div>
+                </Section>
 
-                {/* Meal Date Management Section (shared templates: app admins only) */}
-                {appAdmin && (
-                <div className="bg-white rounded-2xl shadow-xl p-8">
-                    <div className="mb-6">
-                        <h2 className="text-2xl font-bold text-gray-800 mb-2">{t('admin.mealDateTitle')}</h2>
-                        <p className="text-gray-600">{t('admin.mealDateDesc')}</p>
-                    </div>
-
-                    {mealUpdateError && (
-                        <div className="mb-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-                            ❌ {mealUpdateError}
-                        </div>
-                    )}
-
-                    {mealUpdateSuccess && (
-                        <div className="mb-6 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg">
-                            {mealUpdateSuccess}
-                        </div>
-                    )}
-
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                        <h3 className="font-semibold text-blue-900 mb-2">{t('admin.howItWorksTitle')}</h3>
-                        <ul className="text-sm text-blue-800 space-y-1">
-                            <li>• {t('admin.howItWorks1')}</li>
-                            <li>• {t('admin.howItWorks2')}</li>
-                            <li>• {t('admin.howItWorks3')}</li>
-                            <li>• {t('admin.howItWorks4')}</li>
-                        </ul>
-                    </div>
-
-                    <button
-                        onClick={handleUpdateMealDates}
-                        disabled={mealUpdateLoading}
-                        className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
-                    >
-                        {mealUpdateLoading ? t('admin.updatingDatesButton') : t('admin.updateDatesButton')}
-                    </button>
-
-                    <p className="mt-4 text-xs text-gray-500 text-center">
-                        {t('admin.updateDatesWarning')}
-                    </p>
-
-                    <hr className="my-6 border-gray-200" />
-
-                    <h3 className="font-bold text-gray-800 mb-2">Migration: Copy Daily Menu to Templates</h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                        Perform a one-time copy of all existing <code>dailymenu</code> data to the new <code>menu_templates</code> collection. This is required for the new household-scoped architecture.
-                    </p>
-                    <button
-                        onClick={async () => {
-                            if (!confirm('Are you sure you want to copy dailymenu to menu_templates? This will overwrite existing templates with the same day IDs.')) return;
-                            setMealUpdateLoading(true);
-                            setMealUpdateError('');
-                            setMealUpdateSuccess('');
-                            try {
-                                const { copyDailyMenuToTemplates } = await import('@/lib/firestore');
-                                const result = await copyDailyMenuToTemplates();
-                                if (result.success) {
-                                    setMealUpdateSuccess(`✅ Successfully copied ${result.copied} meals to templates!`);
-                                } else {
-                                    setMealUpdateError(result.error || 'Failed to copy templates');
-                                }
-                            } catch (e: any) {
-                                setMealUpdateError(e.message || 'Failed to copy templates');
-                            } finally {
-                                setMealUpdateLoading(false);
-                            }
-                        }}
-                        disabled={mealUpdateLoading}
-                        className="w-full bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
-                    >
-                        {mealUpdateLoading ? 'Copying...' : 'Copy Daily Menu to Templates'}
-                    </button>
-
-                    <hr className="my-6 border-gray-200" />
-
-                    <h3 className="font-bold text-gray-800 mb-2">Security: hash stored passwords &amp; PINs</h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                        One-time migration: replaces any plaintext <code>password</code> / cook <code>pin</code> fields with salted hashes and deletes the plaintext. Accounts are also migrated automatically when they next sign in.
-                    </p>
-                    {credentialMigration.message && (
-                        <div className="mb-4 bg-gray-50 border border-gray-200 text-gray-800 px-4 py-3 rounded-lg text-sm">
-                            {credentialMigration.message}
-                        </div>
-                    )}
-                    <button
-                        onClick={handleMigrateCredentials}
-                        disabled={credentialMigration.busy}
-                        className="w-full bg-gradient-to-r from-slate-600 to-slate-800 hover:from-slate-700 hover:to-slate-900 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
-                    >
-                        {credentialMigration.busy ? 'Working...' : 'Hash stored passwords & PINs'}
-                    </button>
-                </div>
-                )}
-
-                {/* Responsibility Assignment Section */}
-                <div className="bg-white rounded-2xl shadow-xl p-8">
-                    <div className="mb-6">
-                        <h2 className="text-2xl font-bold text-gray-800 mb-2">{t('admin.assignTitle')}</h2>
-                        <p className="text-gray-600">{t('admin.assignDesc')}</p>
-                    </div>
-
-                    <div className="mb-6">
+                {/* Assign duties */}
+                <Section icon={<CalendarDays size={18} />} title={t('admin.assignTitle')} description={t('admin.assignDesc')}>
+                    <div className="space-y-5">
                         <MultiDatePicker selectedDates={selectedDates} onDateToggle={handleDateToggle} />
+                        <div className="border-t border-line pt-5">
+                            <BulkResponsibilityManager
+                                selectedDates={selectedDates}
+                                members={members}
+                                onSuccess={() => { }}
+                                householdId={user.uid}
+                            />
+                        </div>
                     </div>
+                </Section>
 
-                    <BulkResponsibilityManager
-                        selectedDates={selectedDates}
-                        members={members}
-                        onSuccess={() => { }}
-                        householdId={user?.uid || ''}
-                    />
-                </div>
-
+                {/* App-admin maintenance (shared templates) */}
                 {appAdmin ? (
-                    <AdminJsonEditor />
-                ) : (
-                    <p className="text-xs text-gray-500 text-center">
-                        Shared menu templates and the database editor are limited to app admins.
-                    </p>
-                )}
+                    <>
+                        <Section icon={<Wrench size={18} />} tone="danger" title="Maintenance" description="App-admin tools that change shared data. Each asks for confirmation.">
+                            <div className="space-y-3">
+                                {mealUpdateError && <Alert tone="error">{mealUpdateError}</Alert>}
+                                {mealUpdateSuccess && <Alert tone="success">{mealUpdateSuccess}</Alert>}
 
-                {/* Navigation */}
-                <div>
-                    <button
-                        type="button"
-                        onClick={() => router.push('/')}
-                        className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 px-4 rounded-lg transition-all duration-200"
-                    >
-                        {t('admin.backButton')}
-                    </button>
-                </div>
+                                <div className="flex flex-col gap-3 rounded-xl border border-line p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-ink">{t('admin.mealDateTitle')}</p>
+                                        <p className="text-sm text-ink-muted">{t('admin.mealDateDesc')}</p>
+                                    </div>
+                                    <Button variant="danger-soft" size="sm" className="shrink-0" loading={mealUpdateLoading} leadingIcon={<RefreshCw size={14} aria-hidden="true" />} onClick={handleUpdateMealDates}>
+                                        Update dates
+                                    </Button>
+                                </div>
+
+                                <div className="flex flex-col gap-3 rounded-xl border border-line p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-ink">Copy daily menu to templates</p>
+                                        <p className="text-sm text-ink-muted">One-time copy of <code className="rounded bg-surface-muted px-1 text-[13px]">dailymenu</code> into <code className="rounded bg-surface-muted px-1 text-[13px]">menu_templates</code>.</p>
+                                    </div>
+                                    <Button variant="danger-soft" size="sm" className="shrink-0" loading={mealUpdateLoading} leadingIcon={<CopyIcon size={14} aria-hidden="true" />} onClick={handleCopyDailyMenu}>
+                                        Copy menu
+                                    </Button>
+                                </div>
+
+                                <div className="flex flex-col gap-3 rounded-xl border border-line p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-ink">Hash stored passwords &amp; PINs</p>
+                                        <p className="text-sm text-ink-muted">Replaces any plaintext credentials with salted hashes. Accounts also migrate when they next sign in.</p>
+                                    </div>
+                                    <Button variant="danger-soft" size="sm" className="shrink-0" loading={credentialMigration.busy} leadingIcon={<KeyRound size={14} aria-hidden="true" />} onClick={handleMigrateCredentials}>
+                                        Hash credentials
+                                    </Button>
+                                </div>
+                                {credentialMigration.message && (
+                                    <Alert tone={credentialMigration.ok === false ? 'error' : 'info'}>{credentialMigration.message}</Alert>
+                                )}
+                            </div>
+                        </Section>
+
+                        <AdminJsonEditor />
+                    </>
+                ) : (
+                    <p className="px-1 text-xs text-ink-muted">Shared menu templates and the database editor are limited to app admins.</p>
+                )}
             </div>
-        </div>
+        </AppShell>
     );
 }

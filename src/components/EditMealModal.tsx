@@ -4,12 +4,17 @@ import { MealItem, MealItemTranslation } from '@/types/meal';
 import { updateMeal } from '@/lib/firestore';
 import { useAuth } from './AuthProvider';
 import { actorFromUser } from '@/lib/actor';
-import { useState, useRef } from 'react';
-import { X, Utensils, Clock, Flame, Link as LinkIcon, Image as ImageIcon, CheckCircle, ShoppingCart, Sparkles } from 'lucide-react';
+import { useId, useState, useRef } from 'react';
+import { CheckCircle2, ShoppingCart, Sparkles } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { translateTexts } from '@/lib/translate';
 import { supportedLocales } from '@/lib/i18n';
 import { generateMealDetails } from '@/lib/ai';
+import { cn } from '@/lib/cn';
+import { Dialog } from './ui/Dialog';
+import { Button } from './ui/Button';
+import { Alert, Field, TextArea, TextInput } from './ui/Field';
+import { Spinner } from './ui/Spinner';
 
 interface EditMealModalProps {
     meal: MealItem;
@@ -199,281 +204,197 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
         }
     };
 
-    if (!isOpen) return null;
-
-    const inputClasses = "w-full px-4 py-2.5 bg-brand-light/10 border border-brand-light/30 rounded-xl focus:ring-2 focus:ring-brand-primary focus:bg-white focus:border-transparent transition-all outline-none text-brand-darkest placeholder:text-brand-dark/50";
-    const labelClasses = "flex items-center gap-2 text-sm font-medium text-brand-dark mb-1.5 ml-1";
+    const formId = useId();
 
     // Loading state covers both saving + translating
     const isBusy = loading || translating;
-    const busyLabel = translating
-        ? '🌐 Translating...'
-        : t('editMeal.savingButton');
+    const busyLabel = translating ? t('editMeal.translating') : t('editMeal.savingButton');
+    const mealLabel = t(`mealCard.${mealType}`);
+    const set = (patch: Partial<typeof formData>) => setFormData(prev => ({ ...prev, ...patch }));
+
+    if (showSuccess) {
+        return (
+            <Dialog open={isOpen} onClose={handleClose} title={t('editMeal.successTitle')} size="sm" closeLabel={t('common.close')}
+                footer={<Button fullWidth onClick={handleClose}>{t('editMeal.gotItButton')}</Button>}
+            >
+                <div className="flex flex-col items-center py-2 text-center">
+                    <span className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success-soft text-success" aria-hidden="true">
+                        <CheckCircle2 size={28} />
+                    </span>
+                    <p className="text-[15px] text-ink">{t('editMeal.successMessage')}</p>
+                    <p className="mt-4 flex items-center gap-2 rounded-xl bg-surface-muted px-4 py-3 text-sm font-medium text-ink">
+                        <ShoppingCart size={16} className="shrink-0 text-accent-strong" aria-hidden="true" />
+                        {t('editMeal.groceryReminder')}
+                    </p>
+                </div>
+            </Dialog>
+        );
+    }
 
     return (
-        <div className="fixed inset-0 bg-brand-darkest/60 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full max-h-[92vh] overflow-hidden flex flex-col border border-white/20">
+        <Dialog
+            open={isOpen}
+            onClose={onClose}
+            dismissible={!isBusy}
+            title={t('mealCard.edit', { meal: mealLabel.toLowerCase() })}
+            description={t('editMeal.subtitle')}
+            closeLabel={t('common.close')}
+            footer={
+                <>
+                    <Button variant="secondary" onClick={onClose} disabled={isBusy}>{t('editMeal.cancelButton')}</Button>
+                    <Button type="submit" form={formId} loading={isBusy} loadingText={busyLabel} disabled={isGenerating}>
+                        {t('editMeal.saveButton')}
+                    </Button>
+                </>
+            }
+        >
+            <form id={formId} onSubmit={handleSubmit} className="space-y-5" noValidate={false}>
+                {error && <Alert tone="error">{error}</Alert>}
 
-                {showSuccess ? (
-                    <div className="p-8 flex flex-col items-center justify-center text-center space-y-6 animate-in zoom-in-50 duration-300">
-                        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center text-green-600 mb-2">
-                            <CheckCircle size={40} />
-                        </div>
-                        <div>
-                            <h3 className="text-2xl font-bold text-brand-darkest mb-2">{t('editMeal.successTitle')}</h3>
-                            <p className="text-brand-dark text-lg">{t('editMeal.successMessage')}</p>
-                            <div className="mt-4 p-4 bg-brand-light/10 rounded-xl border border-brand-light/20 flex flex-col items-center gap-2">
-                                <ShoppingCart className="text-brand-primary" size={24} />
-                                <p className="font-semibold text-brand-primary">{t('editMeal.groceryReminder')}</p>
-                            </div>
-                        </div>
-                        <button
-                            onClick={handleClose}
-                            className="w-full py-3 bg-brand-primary text-white font-bold rounded-xl hover:bg-brand-dark transition-all active:scale-95 shadow-lg shadow-brand-primary/20"
-                        >
-                            {t('editMeal.gotItButton')}
-                        </button>
+                <p className="flex items-start gap-2 rounded-xl bg-accent-soft/60 px-3.5 py-3 text-sm text-accent-strong">
+                    <Sparkles size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>{t('editMeal.aiHint')}</span>
+                </p>
+
+                {formData.image_url && (
+                    <div className="relative h-32 w-full overflow-hidden rounded-2xl border border-line bg-surface-muted">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                            src={formData.image_url}
+                            alt={t('editMeal.livePreview')}
+                            className="h-full w-full object-cover"
+                            onError={(e) => (e.currentTarget.style.display = 'none')}
+                        />
                     </div>
-                ) : (
-                    <>
-                        {/* Header */}
-                        <div className="px-6 py-5 border-b border-brand-light/20 flex items-center justify-between bg-white sticky top-0 z-10">
-                            <div>
-                                <h2 className="text-xl font-bold text-brand-darkest flex items-center gap-2">
-                                    <span className="p-2 bg-brand-light/30 text-brand-primary rounded-lg">
-                                        <Utensils size={20} />
-                                    </span>
-                                    {t('editMeal.editTitle')} {mealType.charAt(0).toUpperCase() + mealType.slice(1)}
-                                </h2>
-                                <p className="text-xs text-brand-dark mt-0.5">{t('editMeal.subtitle')}</p>
-                            </div>
-                            <button onClick={onClose} className="p-2 hover:bg-brand-light/20 rounded-full text-brand-dark/50 transition-colors">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        {/* Form Body */}
-                        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto custom-scrollbar">
-                            {error && (
-                                <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm font-medium">
-                                    {error}
-                                </div>
-                            )}
-
-                            {/* Translation notice */}
-                            <div className="bg-brand-light/10 border border-brand-light/20 rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs text-brand-dark">
-                                <span>🌐</span>
-                                <span>Translations for all languages will be generated automatically when you save.</span>
-                            </div>
-
-                            {/* AI Notice */}
-                            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-amber-800 shadow-sm">
-                                <Sparkles size={16} className="text-amber-500 shrink-0 mt-0.5" />
-                                <div>
-                                    <strong className="block mb-0.5 text-sm">AI Auto-Fill Active</strong>
-                                    Type a new meal name below and click completely out of the box. Our WTC AI will automatically estimate ingredients, instructions, and nutritional facts for you!
-                                </div>
-                            </div>
-
-                            {/* Image Preview Card */}
-                            {formData.image_url && (
-                                <div className="relative h-32 w-full rounded-2xl overflow-hidden border border-brand-light/30 group">
-                                    <img
-                                        src={formData.image_url}
-                                        alt="Preview"
-                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                        onError={(e) => (e.currentTarget.style.display = 'none')}
-                                    />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                                    <span className="absolute bottom-3 left-3 text-white text-xs font-medium bg-black/20 backdrop-blur-md px-2 py-1 rounded-md">
-                                        {t('editMeal.livePreview')}
-                                    </span>
-                                </div>
-                            )}
-
-                            <div className="relative">
-                                <label className={labelClasses}>{t('editMeal.mealNameLabel')}</label>
-                                <div className="relative">
-                                    <input
-                                        type="text"
-                                        value={formData.item_name}
-                                        onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
-                                        onBlur={handleNameBlur}
-                                        className={`${inputClasses} pr-10`}
-                                        placeholder={t('editMeal.mealNamePlaceholder')}
-                                        required
-                                        disabled={isGenerating}
-                                    />
-                                    {isGenerating && (
-                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                            <div className="w-5 h-5 border-2 border-brand-primary/30 border-t-brand-primary rounded-full animate-spin" />
-                                        </div>
-                                    )}
-                                </div>
-                                {isGenerating && <span className="absolute -bottom-5 left-1 text-[10px] text-brand-primary font-bold animate-pulse">WTC AI is writing recipes & nutrition...</span>}
-                            </div>
-
-                            <div className={isGenerating ? "opacity-50 pointer-events-none transition-opacity mt-4" : "transition-opacity mt-4"}>
-                                <label className={labelClasses}>{t('editMeal.ingredientsLabel')}</label>
-                                <textarea
-                                    value={formData.ingredients}
-                                    onChange={(e) => setFormData({ ...formData, ingredients: e.target.value })}
-                                    className={`${inputClasses} resize-none`}
-                                    rows={2}
-                                    placeholder={t('editMeal.ingredientsPlaceholder')}
-                                    required
-                                />
-                            </div>
-
-                            <div>
-                                <label className={labelClasses}>{t('editMeal.instructionsLabel')}</label>
-                                <textarea
-                                    value={formData.cooking_instructions}
-                                    onChange={(e) => setFormData({ ...formData, cooking_instructions: e.target.value })}
-                                    className={`${inputClasses} resize-none`}
-                                    rows={3}
-                                    placeholder={t('editMeal.instructionsPlaceholder')}
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className={labelClasses}><Flame size={14} className="text-brand-secondary" /> {t('editMeal.caloriesLabel')}</label>
-                                    <input
-                                        type="number"
-                                        value={formData.calories}
-                                        onChange={(e) => setFormData({ ...formData, calories: e.target.value })}
-                                        className={inputClasses}
-                                        required
-                                        min="0"
-                                    />
-                                </div>
-                                <div>
-                                    <label className={labelClasses}><Clock size={14} className="text-brand-primary" /> {t('editMeal.prepTimeLabel')}</label>
-                                    <div className="relative">
-                                        <input
-                                            type="number"
-                                            value={formData.prep_time_minutes}
-                                            onChange={(e) => setFormData({ ...formData, prep_time_minutes: e.target.value })}
-                                            className={inputClasses}
-                                            required
-                                            min="0"
-                                        />
-                                        <span className="absolute right-3 top-2.5 text-xs text-brand-dark/50 mt-0.5">{t('editMeal.prepTimeUnit')}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Nutrients Section */}
-                            <div className="bg-brand-light/10 p-4 rounded-2xl border border-brand-light/30">
-                                <label className="text-sm font-semibold text-brand-dark mb-3 block">{t('editMeal.nutritionalInfoLabel')}</label>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="text-xs text-brand-dark/70 mb-1 block">{t('editMeal.proteinLabel')}</label>
-                                        <input type="number" value={formData.protein_g} onChange={(e) => setFormData({ ...formData, protein_g: e.target.value })} className={inputClasses} placeholder="0" min="0" step="0.1" />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-brand-dark/70 mb-1 block">{t('editMeal.carbsLabel')}</label>
-                                        <input type="number" value={formData.carbs_g} onChange={(e) => setFormData({ ...formData, carbs_g: e.target.value })} className={inputClasses} placeholder="0" min="0" step="0.1" />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-brand-dark/70 mb-1 block">{t('editMeal.fatLabel')}</label>
-                                        <input type="number" value={formData.fat_g} onChange={(e) => setFormData({ ...formData, fat_g: e.target.value })} className={inputClasses} placeholder="0" min="0" step="0.1" />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-brand-dark/70 mb-1 block">{t('editMeal.fiberLabel')}</label>
-                                        <input type="number" value={formData.fiber_g} onChange={(e) => setFormData({ ...formData, fiber_g: e.target.value })} className={inputClasses} placeholder="0" min="0" step="0.1" />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <label className={labelClasses}><LinkIcon size={14} /> {t('editMeal.recipeUrlLabel')}</label>
-                                    <input type="url" value={formData.recipe_url} onChange={(e) => setFormData({ ...formData, recipe_url: e.target.value })} className={inputClasses} placeholder={t('editMeal.recipeUrlPlaceholder')} disabled={isGenerating} />
-                                </div>
-                                <div>
-                                    <label className={labelClasses}><ImageIcon size={14} /> {t('editMeal.imageUrlLabel')}</label>
-                                    <input type="url" value={formData.image_url} onChange={(e) => setFormData({ ...formData, image_url: e.target.value })} className={inputClasses} placeholder={t('editMeal.imageUrlPlaceholder')} disabled={isGenerating} />
-                                </div>
-                            </div>
-
-                            <label className={`flex items-center p-4 bg-brand-light/10 border border-brand-light/20 rounded-2xl cursor-pointer hover:bg-brand-light/20 transition-colors group ${isGenerating ? 'opacity-50 pointer-events-none' : ''}`}>
-                                <input
-                                    type="checkbox"
-                                    checked={formData.is_vegetarian}
-                                    onChange={(e) => setFormData({ ...formData, is_vegetarian: e.target.checked })}
-                                    className="w-5 h-5 text-brand-primary border-brand-secondary rounded-lg focus:ring-brand-primary"
-                                />
-                                <div className="ml-3">
-                                    <span className="block text-sm font-bold text-brand-darkest">{t('editMeal.vegetarianLabel')}</span>
-                                    <span className="text-xs text-brand-dark">{t('editMeal.vegetarianDescription')}</span>
-                                </div>
-                                <span className="ml-auto text-xl group-hover:scale-110 transition-transform">🌱</span>
-                            </label>
-
-                            {/* Scope Toggle */}
-                            <div className="bg-brand-light/10 p-4 rounded-2xl border border-brand-light/30">
-                                <label className="text-sm font-bold text-brand-darkest mb-3 block">Update Scope</label>
-                                <div className="space-y-2">
-                                    <label className="flex items-center gap-3 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="scope"
-                                            className="w-4 h-4 text-brand-primary"
-                                            checked={!applyToAllMonths}
-                                            onChange={() => setApplyToAllMonths(false)}
-                                        />
-                                        <div>
-                                            <span className="block text-sm font-semibold text-brand-darkest">Only this date</span>
-                                            <span className="block text-xs text-brand-dark/70">Changes apply to {mealId} only.</span>
-                                        </div>
-                                    </label>
-                                    <label className="flex items-center gap-3 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="scope"
-                                            className="w-4 h-4 text-brand-primary"
-                                            checked={applyToAllMonths}
-                                            onChange={() => setApplyToAllMonths(true)}
-                                        />
-                                        <div>
-                                            <span className="block text-sm font-semibold text-brand-darkest">Every month</span>
-                                            <span className="block text-xs text-brand-dark/70">Updates the monthly template for this day.</span>
-                                        </div>
-                                    </label>
-                                </div>
-                            </div>
-
-                            {/* Action Buttons */}
-                            <div className="flex gap-3 pt-2 sticky bottom-0 bg-white">
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="flex-1 px-6 py-3 border border-brand-light/30 text-brand-dark font-semibold rounded-xl hover:bg-brand-light/10 transition-all active:scale-95"
-                                    disabled={isBusy}
-                                >
-                                    {t('editMeal.cancelButton')}
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="flex-[2] px-6 py-3 bg-brand-primary hover:bg-brand-dark text-white font-semibold rounded-xl transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-brand-primary/20"
-                                    disabled={isBusy}
-                                >
-                                    {isBusy ? (
-                                        <>
-                                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                            {busyLabel}
-                                        </>
-                                    ) : (
-                                        t('editMeal.saveButton')
-                                    )}
-                                </button>
-                            </div>
-                        </form>
-                    </>
                 )}
-            </div>
-        </div>
+
+                <Field
+                    label={t('editMeal.mealNameLabel')}
+                    required
+                    hint={isGenerating ? (
+                        <span className="inline-flex items-center gap-1.5 font-medium text-accent-strong"><Spinner size={12} /> {t('editMeal.aiWriting')}</span>
+                    ) : undefined}
+                >
+                    <TextInput
+                        value={formData.item_name}
+                        onChange={(e) => set({ item_name: e.target.value })}
+                        onBlur={handleNameBlur}
+                        placeholder={t('editMeal.mealNamePlaceholder')}
+                        disabled={isGenerating}
+                        aria-busy={isGenerating || undefined}
+                        autoComplete="off"
+                    />
+                </Field>
+
+                <div className={cn('space-y-5 transition-opacity', isGenerating && 'pointer-events-none opacity-50')} aria-hidden={isGenerating || undefined}>
+                    <Field label={t('editMeal.ingredientsLabel')} required>
+                        <TextArea
+                            rows={2}
+                            value={formData.ingredients}
+                            onChange={(e) => set({ ingredients: e.target.value })}
+                            placeholder={t('editMeal.ingredientsPlaceholder')}
+                        />
+                    </Field>
+
+                    <Field label={t('editMeal.instructionsLabel')}>
+                        <TextArea
+                            rows={4}
+                            value={formData.cooking_instructions}
+                            onChange={(e) => set({ cooking_instructions: e.target.value })}
+                            placeholder={t('editMeal.instructionsPlaceholder')}
+                        />
+                    </Field>
+
+                    <fieldset>
+                        <legend className="mb-2 text-sm font-semibold text-ink">{t('editMeal.detailsSection')}</legend>
+                        <div className="grid grid-cols-2 gap-3">
+                            <Field label={t('editMeal.caloriesLabel')} required>
+                                <TextInput type="number" inputMode="numeric" min="0" value={formData.calories} onChange={(e) => set({ calories: e.target.value })} />
+                            </Field>
+                            <Field label={`${t('editMeal.prepTimeLabel')} (${t('editMeal.prepTimeUnit')})`} required>
+                                <TextInput type="number" inputMode="numeric" min="0" value={formData.prep_time_minutes} onChange={(e) => set({ prep_time_minutes: e.target.value })} />
+                            </Field>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend className="mb-2 text-sm font-semibold text-ink">{t('editMeal.nutritionalInfoLabel')}</legend>
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                            {([
+                                ['protein_g', 'editMeal.proteinLabel'],
+                                ['carbs_g', 'editMeal.carbsLabel'],
+                                ['fat_g', 'editMeal.fatLabel'],
+                                ['fiber_g', 'editMeal.fiberLabel'],
+                            ] as const).map(([key, labelKey]) => (
+                                <Field key={key} label={t(labelKey)}>
+                                    <TextInput
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0"
+                                        step="0.1"
+                                        placeholder="0"
+                                        value={formData[key]}
+                                        onChange={(e) => set({ [key]: e.target.value } as Partial<typeof formData>)}
+                                    />
+                                </Field>
+                            ))}
+                        </div>
+                    </fieldset>
+
+                    <fieldset className="space-y-3">
+                        <legend className="mb-2 text-sm font-semibold text-ink">{t('editMeal.linksSection')}</legend>
+                        <Field label={t('editMeal.recipeUrlLabel')}>
+                            <TextInput type="url" inputMode="url" value={formData.recipe_url} onChange={(e) => set({ recipe_url: e.target.value })} placeholder={t('editMeal.recipeUrlPlaceholder')} />
+                        </Field>
+                        <Field label={t('editMeal.imageUrlLabel')}>
+                            <TextInput type="url" inputMode="url" value={formData.image_url} onChange={(e) => set({ image_url: e.target.value })} placeholder={t('editMeal.imageUrlPlaceholder')} />
+                        </Field>
+                    </fieldset>
+
+                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-4 transition-colors hover:bg-surface-muted">
+                        <input
+                            type="checkbox"
+                            checked={formData.is_vegetarian}
+                            onChange={(e) => set({ is_vegetarian: e.target.checked })}
+                            className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded accent-[var(--color-accent)]"
+                        />
+                        <span>
+                            <span className="block text-sm font-semibold text-ink">{t('editMeal.vegetarianLabel')}</span>
+                            <span className="text-sm text-ink-muted">{t('editMeal.vegetarianDescription')}</span>
+                        </span>
+                    </label>
+
+                    <fieldset>
+                        <legend className="mb-2 text-sm font-semibold text-ink">{t('editMeal.scopeTitle')}</legend>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                            {([
+                                { all: false, title: t('editMeal.scopeThisDay'), hint: t('editMeal.scopeThisDayHint', { date: mealId }) },
+                                { all: true, title: t('editMeal.scopeEveryMonth'), hint: t('editMeal.scopeEveryMonthHint') },
+                            ]).map(opt => (
+                                <label
+                                    key={String(opt.all)}
+                                    className={cn(
+                                        'flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors',
+                                        applyToAllMonths === opt.all ? 'border-accent bg-accent-soft/50' : 'border-line hover:bg-surface-muted',
+                                    )}
+                                >
+                                    <input
+                                        type="radio"
+                                        name={`${formId}-scope`}
+                                        checked={applyToAllMonths === opt.all}
+                                        onChange={() => setApplyToAllMonths(opt.all)}
+                                        className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-[var(--color-accent)]"
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-semibold text-ink">{opt.title}</span>
+                                        <span className="text-xs text-ink-muted">{opt.hint}</span>
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                    </fieldset>
+                </div>
+            </form>
+        </Dialog>
     );
 }

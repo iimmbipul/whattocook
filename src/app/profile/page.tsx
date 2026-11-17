@@ -2,13 +2,22 @@
 
 import { useAuth } from '@/components/AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
-import { User as UserIcon, Mail, Phone, Hash, Shield, Users, Utensils, RefreshCw, CheckCircle2, ChefHat, Plus, X, Scale, Trash2, Calendar } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { Phone, Shield, Users, Utensils, RefreshCw, ChefHat, Plus, Scale, Trash2, Calendar, CalendarCheck2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { changeDietCategory, getAllHouseholdMembers, createUser, removeHouseholdMember } from '@/lib/auth';
 import { resetHouseholdResponsibilities, getHouseholdAssignmentCounts } from '@/lib/firestore';
 import { isCalendarConnected } from '@/lib/calendarTokens';
 import { getProfileData } from '@/lib/pageData';
+import AppShell from '@/components/AppShell';
+import { displayNameOf } from '@/components/Header';
+import { Section } from '@/components/ui/Card';
+import { Avatar, Badge } from '@/components/ui/Badge';
+import { Button, IconButton } from '@/components/ui/Button';
+import { Alert, Field, TextInput } from '@/components/ui/Field';
+import { Skeleton, Spinner } from '@/components/ui/Spinner';
+import { CopyValue } from '@/components/ui/CopyValue';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { cn } from '@/lib/cn';
 
 const DIET_CATEGORIES = [
     { id: 'Healthy', icon: '🥗', desc: 'Nutritious & low guilt' },
@@ -22,13 +31,14 @@ const DIET_CATEGORIES = [
 export default function ProfilePage() {
     const { user } = useAuth();
     const { t } = useLocale();
-    const router = useRouter();
+    const { confirm, dialog } = useConfirm();
 
     const [dietCategory, setDietCategory] = useState<string | null>(null);
     const [loadingDiet, setLoadingDiet] = useState(true);
     const [isChangingDiet, setIsChangingDiet] = useState(false);
     const [savingDiet, setSavingDiet] = useState(false);
     const [dietSuccess, setDietSuccess] = useState(false);
+    const [dietError, setDietError] = useState('');
 
     const [cooks, setCooks] = useState<{ uid: string; email: string; label: string; phoneNumber?: string }[]>([]);
     const [loadingCooks, setLoadingCooks] = useState(true);
@@ -37,6 +47,7 @@ export default function ProfilePage() {
     const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
     const [loadingMembers, setLoadingMembers] = useState(true);
     const [removingUid, setRemovingUid] = useState<string | null>(null);
+    const [removeError, setRemoveError] = useState('');
     const [isAddingCook, setIsAddingCook] = useState(false);
     const [cookPhone, setCookPhone] = useState('');
     const [cookPin, setCookPin] = useState('');
@@ -107,7 +118,13 @@ export default function ProfilePage() {
     };
 
     const handleDisconnectCalendar = async () => {
-        if (!confirm('Disconnect Google Calendar? Existing events will remain on your calendar but new meal assignments won\'t sync.')) return;
+        const ok = await confirm({
+            title: 'Disconnect Google Calendar?',
+            message: 'Existing events stay on your calendar, but new meal assignments won’t sync.',
+            confirmLabel: 'Disconnect',
+            tone: 'danger',
+        });
+        if (!ok) return;
         setDisconnectingCal(true);
         try {
             await fetch('/api/calendar/disconnect', { method: 'POST' });
@@ -119,7 +136,13 @@ export default function ProfilePage() {
 
     const handleResetResponsibilities = async () => {
         if (!user?.householdId) return;
-        if (!confirm('Reset all cooking responsibilities and split them evenly across every household member? This will overwrite existing assignments for every day.')) return;
+        const ok = await confirm({
+            title: 'Reset all cooking duties?',
+            message: 'Every day’s Breakfast + Lunch and Dinner assignments are overwritten and split evenly across household members.',
+            confirmLabel: 'Reset duties',
+            tone: 'danger',
+        });
+        if (!ok) return;
 
         setResettingResp(true);
         setResetRespResult(null);
@@ -189,12 +212,19 @@ export default function ProfilePage() {
     }, [profileHouseholdId, profileUid, profileRole]);
 
     const handleRemoveMember = async (uid: string, label: string) => {
-        if (!confirm(`Remove ${label} from your household? Cooking duties will be redistributed evenly across the remaining members.`)) return;
+        const ok = await confirm({
+            title: `Remove ${label}?`,
+            message: 'They lose access to this household, and cooking duties are redistributed evenly across the remaining members.',
+            confirmLabel: 'Remove',
+            tone: 'danger',
+        });
+        if (!ok) return;
+        setRemoveError('');
         setRemovingUid(uid);
         const result = await removeHouseholdMember(uid, 'member');
         if (!result.success) {
             setRemovingUid(null);
-            alert(result.error || 'Failed to remove member.');
+            setRemoveError(result.error || 'Failed to remove member.');
             return;
         }
         if (user?.householdId) {
@@ -205,14 +235,21 @@ export default function ProfilePage() {
     };
 
     const handleRemoveCook = async (uid: string, label: string) => {
-        if (!confirm(`Remove ${label} from your household? They will no longer be able to log in.`)) return;
+        const ok = await confirm({
+            title: `Remove ${label}?`,
+            message: 'They will no longer be able to log in.',
+            confirmLabel: 'Remove',
+            tone: 'danger',
+        });
+        if (!ok) return;
+        setRemoveError('');
         setRemovingUid(uid);
         const result = await removeHouseholdMember(uid, 'cook');
         setRemovingUid(null);
         if (result.success) {
             loadCooks();
         } else {
-            alert(result.error || 'Failed to remove cook.');
+            setRemoveError(result.error || 'Failed to remove cook.');
         }
     };
 
@@ -222,7 +259,7 @@ export default function ProfilePage() {
         setCookError('');
 
         if (!/^\+?\d{7,15}$/.test(cookPhone.trim())) {
-            setCookError('Enter a valid phone number.');
+            setCookError('Enter a valid phone number, e.g. +919876543210.');
             return;
         }
         if (!/^\d{4,6}$/.test(cookPin.trim())) {
@@ -246,9 +283,14 @@ export default function ProfilePage() {
 
     const handleChangeDiet = async (newCategory: string) => {
         if (!user?.householdId) return;
-        
-        if (!confirm(`Are you sure you want to change your diet to ${newCategory}? This will generate a new 30-day meal plan and replace your current template.`)) return;
-        
+        const ok = await confirm({
+            title: `Switch to ${newCategory}?`,
+            message: 'A new 30-day meal plan is generated and replaces your household’s current template.',
+            confirmLabel: 'Switch plan',
+        });
+        if (!ok) return;
+
+        setDietError('');
         setSavingDiet(true);
         const success = await changeDietCategory(user.householdId, newCategory);
         if (success) {
@@ -259,439 +301,266 @@ export default function ProfilePage() {
                 setIsChangingDiet(false);
             }, 3000);
         } else {
-            alert('Failed to change diet category. Please try again.');
+            setDietError('Couldn’t change the diet plan. Please try again.');
         }
         setSavingDiet(false);
     };
 
     if (!user) return null;
 
+    const isOwner = user.role === 'user';
+    const name = displayNameOf(user);
+    const roleLabel = isOwner ? 'Owner' : user.role === 'member' ? 'Member' : 'Cook';
+    const currentDiet = DIET_CATEGORIES.find(c => c.id.toLowerCase() === dietCategory?.toLowerCase());
+
     return (
-        <div className="min-h-screen bg-brand-darkest text-brand-light p-4 md:p-8">
-            <div className="max-w-3xl mx-auto mt-8">
-                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-md shadow-2xl relative overflow-hidden">
-                    {/* Decorative blobs */}
-                    <div className="absolute top-[-50px] right-[-50px] w-64 h-64 bg-brand-secondary/20 rounded-full blur-3xl pointer-events-none"></div>
-                    <div className="absolute bottom-[-50px] left-[-50px] w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <AppShell>
+            {dialog}
 
-                    <div className="relative z-10 flex flex-col md:flex-row items-center gap-8 mb-10 border-b border-white/10 pb-8">
-                        <div className="w-28 h-28 bg-brand-secondary text-brand-darkest rounded-full flex items-center justify-center text-5xl font-black shadow-xl shrink-0 overflow-hidden border-4 border-brand-secondary">
-                            {user.photoURL ? (
-                                <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                            ) : (
-                                user.displayName?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase()
-                            )}
-                        </div>
-                        <div className="text-center md:text-left">
-                            <h1 className="text-4xl font-black tracking-tight mb-3">
-                                {user.displayName || t('header.profile') || 'Profile'}
-                            </h1>
-                            <div className="inline-flex items-center gap-2 bg-brand-secondary/20 text-brand-secondary px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wider">
-                                <Shield size={16} />
-                                {user.role === 'user' ? 'Owner' : user.role === 'member' ? 'Member' : 'Cook'}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="relative z-10 space-y-6">
-                        
-                        {/* New Diet Category Section */}
-                        <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                                <h3 className="text-xl font-bold text-brand-secondary flex items-center gap-3">
-                                    <Utensils size={24} />
-                                    Household Diet Plan
-                                </h3>
-                                {!isChangingDiet && !savingDiet && user.role === 'user' && (
-                                    <button 
-                                        onClick={() => setIsChangingDiet(true)}
-                                        className="text-sm bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2"
-                                    >
-                                        <RefreshCw size={14} /> Change Diet
-                                    </button>
-                                )}
-                            </div>
-
-                            {loadingDiet ? (
-                                <div className="animate-pulse h-16 bg-white/5 rounded-xl"></div>
-                            ) : dietSuccess ? (
-                                <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-xl flex items-center gap-3">
-                                    <CheckCircle2 size={24} />
-                                    <div>
-                                        <div className="font-bold">Successfully updated!</div>
-                                        <div className="text-sm opacity-80">Your new 30-day template has been generated.</div>
-                                    </div>
-                                </div>
-                            ) : savingDiet ? (
-                                <div className="flex flex-col items-center justify-center space-y-3 py-6 text-brand-secondary bg-brand-secondary/5 rounded-xl border border-brand-secondary/10">
-                                    <div className="animate-spin rounded-full h-8 w-8 border-4 border-brand-secondary border-t-transparent" />
-                                    <span className="text-sm font-semibold animate-pulse">Generating your new 30-day plan via AI...</span>
-                                </div>
-                            ) : isChangingDiet ? (
-                                <div className="space-y-4">
-                                    <p className="text-sm text-gray-300">Select a new diet category below. Note: This action will replace your household's entire 30-day master template.</p>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                        {DIET_CATEGORIES.map(cat => (
-                                            <button
-                                                key={cat.id}
-                                                onClick={() => handleChangeDiet(cat.id)}
-                                                className={`p-4 border-2 rounded-xl transition-all text-left flex flex-col justify-center
-                                                    ${dietCategory?.toLowerCase() === cat.id.toLowerCase() 
-                                                        ? 'border-brand-secondary bg-brand-secondary/10' 
-                                                        : 'border-white/5 bg-white/5 hover:border-brand-secondary/50 hover:bg-white/10'}`}
-                                            >
-                                                <div className="text-2xl mb-2">{cat.icon}</div>
-                                                <div className="font-bold text-white text-sm">{cat.id}</div>
-                                                <div className="text-xs text-gray-400 mt-1">{cat.desc}</div>
-                                                {dietCategory?.toLowerCase() === cat.id.toLowerCase() && (
-                                                    <div className="text-brand-secondary text-xs font-bold mt-2 uppercase">Current Phase</div>
-                                                )}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <button 
-                                        onClick={() => setIsChangingDiet(false)}
-                                        className="mt-4 text-sm text-gray-400 hover:text-white transition-colors"
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
-                            ) : (
-                                <div className="bg-white/5 p-5 rounded-xl border border-white/5 flex items-center gap-6">
-                                    <div className="text-5xl">
-                                        {DIET_CATEGORIES.find(c => c.id.toLowerCase() === dietCategory?.toLowerCase())?.icon || '🍽️'}
-                                    </div>
-                                    <div>
-                                        <div className="text-sm text-gray-400 mb-1">Current Active Plan</div>
-                                        <div className="font-bold text-2xl text-white">{dietCategory || 'Custom Template'}</div>
-                                    </div>
-                                </div>
-                            )}
-                        </section>
-
-                        <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                                <h3 className="text-xl font-bold text-brand-secondary flex items-center gap-3">
-                                    <Calendar size={24} />
-                                    Google Calendar Sync
-                                </h3>
-                                {calendarStatus?.connected ? (
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={handleSyncCalendar}
-                                            disabled={syncingCal}
-                                            className="text-sm bg-brand-secondary/20 hover:bg-brand-secondary/30 text-brand-secondary px-4 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center gap-2"
-                                        >
-                                            <RefreshCw size={14} className={syncingCal ? 'animate-spin' : ''} />
-                                            {syncingCal ? 'Syncing…' : 'Sync now'}
-                                        </button>
-                                        <button
-                                            onClick={handleDisconnectCalendar}
-                                            disabled={disconnectingCal}
-                                            className="text-sm bg-red-500/20 hover:bg-red-500/30 text-red-300 px-4 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                                        >
-                                            {disconnectingCal ? 'Disconnecting…' : 'Disconnect'}
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <button
-                                        onClick={handleConnectCalendar}
-                                        className="text-sm bg-white text-black hover:bg-gray-100 px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2"
-                                    >
-                                        <Calendar size={14} /> Connect
-                                    </button>
-                                )}
-                            </div>
-                            {calendarStatus === null ? (
-                                <div className="animate-pulse h-12 bg-white/5 rounded-xl" />
-                            ) : calendarStatus.connected ? (
-                                <div className="bg-green-500/10 border border-green-500/30 text-green-300 p-4 rounded-xl">
-                                    <div className="font-bold">Connected{calendarStatus.email ? ` as ${calendarStatus.email}` : ''}</div>
-                                    <div className="text-sm opacity-80 mt-1">Meals you're assigned to cook appear on your calendar with a 1 hour & 15 min reminder. Chef changes update automatically. Use <strong>Sync now</strong> to push the next 30 days.</div>
-                                    {syncResult && (
-                                        <div className="mt-2 text-sm text-white/90 bg-white/5 rounded-lg px-3 py-2">{syncResult}</div>
-                                    )}
-                                </div>
-                            ) : (
-                                <div className="bg-white/5 border border-white/10 text-gray-300 p-4 rounded-xl text-sm">
-                                    Connect your Google account so meals you're assigned to cook show up on your calendar. Each member connects their own account — chef reassignments (skips, redistributions) update the right calendar automatically.
-                                </div>
-                            )}
-                        </section>
-
-                        <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                            <h3 className="text-xl font-bold text-brand-secondary mb-6 flex items-center gap-3">
-                                <UserIcon size={24} />
-                                Account Details
-                            </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <div className="text-sm text-gray-400 mb-1.5 flex items-center gap-2">
-                                        <Mail size={16} /> Email Address
-                                    </div>
-                                    <div className="font-medium text-lg break-all">{user.email}</div>
-                                </div>
-                                <div>
-                                    <div className="text-sm text-gray-400 mb-1.5 flex items-center gap-2">
-                                        <Phone size={16} /> Phone Number
-                                    </div>
-                                    <div className="font-medium text-lg">{user.phoneNumber || 'Not provided'}</div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                            <h3 className="text-xl font-bold text-brand-secondary mb-6 flex items-center gap-3">
-                                <Users size={24} />
-                                Household Info
-                            </h3>
-                            <div className="space-y-4">
-                                {user.houseCode ? (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        <div className="bg-white/5 p-5 rounded-xl border border-white/5 flex flex-col items-center sm:items-start">
-                                            <div className="text-sm text-gray-400 mb-2 flex items-center gap-2">
-                                                <Hash size={16} /> House Code
-                                            </div>
-                                            <div className="font-mono font-bold text-3xl text-indigo-400 tracking-widest">{user.houseCode}</div>
-                                        </div>
-                                        <div className="bg-white/5 p-5 rounded-xl border border-white/5 flex flex-col items-center sm:items-start">
-                                            <div className="text-sm text-gray-400 mb-2 flex items-center gap-2">
-                                                <Hash size={16} /> House PIN
-                                            </div>
-                                            <div className="font-mono font-bold text-3xl text-indigo-400 tracking-widest">{user.housePin}</div>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="text-gray-300 bg-white/5 p-5 rounded-xl border border-white/5">
-                                        You are currently part of a household assigned by an owner. Your internal household ID is <span className="font-mono text-sm block mt-2 text-brand-secondary">{user.householdId}</span>
-                                    </div>
-                                )}
-                            </div>
-                        </section>
-
-                        <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                            <h3 className="text-xl font-bold text-brand-secondary mb-6 flex items-center gap-3">
-                                <Users size={24} />
-                                Household Members
-                                {!loadingMembers && (
-                                    <span className="text-sm font-semibold text-gray-400 ml-1">({members.length})</span>
-                                )}
-                            </h3>
-                            {loadingMembers ? (
-                                <div className="animate-pulse h-16 bg-white/5 rounded-xl"></div>
-                            ) : members.length === 0 ? (
-                                <div className="text-gray-400 text-sm">No members found.</div>
-                            ) : (
-                                <ul className="space-y-3">
-                                    {members.map((m) => {
-                                        const count = assignmentCounts[m.uid] ?? 0;
-                                        const roleLabel = m.role === 'user' ? 'Owner' : 'Member';
-                                        const canRemove = user.role === 'user' && m.role === 'member' && m.uid !== user.uid;
-                                        const isRemoving = removingUid === m.uid;
-                                        return (
-                                            <li
-                                                key={m.uid}
-                                                className="bg-white/5 p-4 rounded-xl border border-white/5 flex items-center gap-4"
-                                            >
-                                                <div className="w-11 h-11 rounded-full bg-brand-secondary/20 text-brand-secondary flex items-center justify-center shrink-0 font-bold">
-                                                    {m.label.charAt(0).toUpperCase()}
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="font-bold text-white truncate">{m.label}</div>
-                                                    <div className="text-xs text-gray-400 uppercase tracking-wider">{roleLabel}</div>
-                                                </div>
-                                                <div className="text-right shrink-0">
-                                                    <div className="text-2xl font-black text-brand-secondary leading-none">{count}</div>
-                                                    <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">
-                                                        {count === 1 ? 'task' : 'tasks'}
-                                                    </div>
-                                                </div>
-                                                {canRemove && (
-                                                    <button
-                                                        onClick={() => handleRemoveMember(m.uid, m.label)}
-                                                        disabled={isRemoving}
-                                                        aria-label={`Remove ${m.label}`}
-                                                        className="shrink-0 w-9 h-9 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 flex items-center justify-center transition-colors disabled:opacity-50"
-                                                    >
-                                                        {isRemoving ? (
-                                                            <div className="animate-spin w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full" />
-                                                        ) : (
-                                                            <Trash2 size={16} />
-                                                        )}
-                                                    </button>
-                                                )}
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            )}
-                        </section>
-
-                        {user.role === 'user' && (
-                            <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                                    <h3 className="text-xl font-bold text-brand-secondary flex items-center gap-3">
-                                        <ChefHat size={24} />
-                                        Household Cooks
-                                    </h3>
-                                    {!isAddingCook && !loadingCooks && (
-                                        <button
-                                            onClick={() => { setIsAddingCook(true); setCookError(''); }}
-                                            className="text-sm bg-brand-secondary text-brand-darkest hover:brightness-110 px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2"
-                                        >
-                                            <Plus size={16} /> Add Cook
-                                        </button>
-                                    )}
-                                </div>
-
-                                {loadingCooks ? (
-                                    <div className="animate-pulse h-16 bg-white/5 rounded-xl"></div>
-                                ) : isAddingCook ? (
-                                    <form onSubmit={handleAddCook} className="space-y-4 bg-white/5 p-5 rounded-xl border border-white/10">
-                                        <div>
-                                            <label className="text-sm text-gray-300 mb-1.5 flex items-center gap-2">
-                                                <Phone size={14} /> Cook Phone Number
-                                            </label>
-                                            <input
-                                                type="tel"
-                                                value={cookPhone}
-                                                onChange={(e) => setCookPhone(e.target.value)}
-                                                placeholder="+1234567890"
-                                                className="w-full px-4 py-3 bg-white/10 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-secondary"
-                                                required
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-sm text-gray-300 mb-1.5 flex items-center gap-2">
-                                                <Hash size={14} /> Login PIN (4–6 digits)
-                                            </label>
-                                            <input
-                                                type="password"
-                                                value={cookPin}
-                                                onChange={(e) => setCookPin(e.target.value)}
-                                                placeholder="e.g. 1234"
-                                                inputMode="numeric"
-                                                className="w-full px-4 py-3 bg-white/10 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-secondary"
-                                                required
-                                            />
-                                            <p className="mt-1 text-xs text-gray-400">The cook will log in using this phone number and PIN.</p>
-                                        </div>
-                                        {cookError && (
-                                            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
-                                                {cookError}
-                                            </div>
-                                        )}
-                                        <div className="flex gap-3">
-                                            <button
-                                                type="submit"
-                                                disabled={savingCook}
-                                                className="flex-1 bg-brand-secondary text-brand-darkest hover:brightness-110 disabled:opacity-50 font-bold py-3 rounded-lg transition-all"
-                                            >
-                                                {savingCook ? 'Adding…' : 'Save Cook'}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => { setIsAddingCook(false); setCookError(''); setCookPhone(''); setCookPin(''); }}
-                                                className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg font-semibold transition-colors flex items-center gap-2"
-                                            >
-                                                <X size={16} /> Cancel
-                                            </button>
-                                        </div>
-                                    </form>
-                                ) : cooks.length === 0 ? (
-                                    <div className="bg-white/5 p-6 rounded-xl border border-white/5 text-center">
-                                        <ChefHat size={40} className="mx-auto text-gray-500 mb-3" />
-                                        <div className="text-gray-300 mb-1">No cook added yet</div>
-                                        <div className="text-sm text-gray-500">Add a cook so they can log in with a phone number and PIN.</div>
-                                    </div>
-                                ) : (
-                                    <ul className="space-y-3">
-                                        {cooks.map((cook) => {
-                                            const isRemoving = removingUid === cook.uid;
-                                            return (
-                                                <li
-                                                    key={cook.uid}
-                                                    className="bg-white/5 p-4 rounded-xl border border-white/5 flex items-center gap-4"
-                                                >
-                                                    <div className="w-11 h-11 rounded-full bg-brand-secondary/20 text-brand-secondary flex items-center justify-center shrink-0">
-                                                        <ChefHat size={20} />
-                                                    </div>
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="font-bold text-white truncate">{cook.label || 'Cook'}</div>
-                                                        <div className="text-sm text-gray-400 flex items-center gap-1.5">
-                                                            <Phone size={12} /> {cook.phoneNumber || '—'}
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => handleRemoveCook(cook.uid, cook.label || 'Cook')}
-                                                        disabled={isRemoving}
-                                                        aria-label={`Remove ${cook.label || 'cook'}`}
-                                                        className="shrink-0 w-9 h-9 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 flex items-center justify-center transition-colors disabled:opacity-50"
-                                                    >
-                                                        {isRemoving ? (
-                                                            <div className="animate-spin w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full" />
-                                                        ) : (
-                                                            <Trash2 size={16} />
-                                                        )}
-                                                    </button>
-                                                </li>
-                                            );
-                                        })}
-                                    </ul>
-                                )}
-                            </section>
+            {/* Identity */}
+            <div className="mb-6 flex items-center gap-4">
+                <Avatar name={name} photoURL={user.photoURL} size={64} />
+                <div className="min-w-0">
+                    <h1 className="truncate text-2xl font-bold tracking-tight text-ink">{name || t('header.profile')}</h1>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-ink-muted">
+                        <Badge tone="accent"><Shield size={12} aria-hidden="true" /> {roleLabel}</Badge>
+                        {user.email && <span className="truncate">{user.email}</span>}
+                        {user.phoneNumber && (
+                            <span className="inline-flex items-center gap-1"><Phone size={13} aria-hidden="true" /> {user.phoneNumber}</span>
                         )}
-
-                        {user.role === 'user' && (
-                            <section className="bg-black/30 rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-colors">
-                                <h3 className="text-xl font-bold text-brand-secondary mb-3 flex items-center gap-3">
-                                    <Scale size={24} />
-                                    Cooking Responsibilities
-                                </h3>
-                                <p className="text-sm text-gray-400 mb-5">
-                                    Reset every day's Breakfast+Lunch and Dinner assignments and split them evenly across all household members.
-                                </p>
-                                <button
-                                    onClick={handleResetResponsibilities}
-                                    disabled={resettingResp}
-                                    className="w-full sm:w-auto bg-brand-secondary text-brand-darkest hover:brightness-110 disabled:opacity-50 font-bold px-6 py-3 rounded-lg transition-all flex items-center justify-center gap-2"
-                                >
-                                    {resettingResp ? (
-                                        <>
-                                            <div className="animate-spin w-4 h-4 border-2 border-brand-darkest border-t-transparent rounded-full" />
-                                            Redistributing…
-                                        </>
-                                    ) : (
-                                        <>
-                                            <RefreshCw size={16} />
-                                            Reset & Divide Equally
-                                        </>
-                                    )}
-                                </button>
-                                {resetRespResult && (
-                                    <div
-                                        className={`mt-4 p-3 rounded-lg text-sm ${
-                                            resetRespResult.ok
-                                                ? 'bg-green-500/10 border border-green-500/30 text-green-400'
-                                                : 'bg-red-500/10 border border-red-500/30 text-red-400'
-                                        }`}
-                                    >
-                                        {resetRespResult.msg}
-                                    </div>
-                                )}
-                            </section>
-                        )}
-
                     </div>
-
-                    <button
-                        onClick={() => router.push('/')}
-                        className="relative z-10 mt-10 w-full bg-brand-light text-brand-darkest hover:bg-brand-secondary hover:text-brand-darkest font-black text-lg py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg"
-                    >
-                        Return to Dashboard
-                    </button>
                 </div>
             </div>
-        </div>
+
+            <div className="space-y-4">
+                {/* Diet plan */}
+                <Section
+                    icon={<Utensils size={18} />}
+                    title="Household diet plan"
+                    description="Your 30-day menu is built from this plan."
+                    action={isOwner && !isChangingDiet && !savingDiet && !loadingDiet ? (
+                        <Button variant="secondary" size="sm" leadingIcon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => setIsChangingDiet(true)}>
+                            Change plan
+                        </Button>
+                    ) : undefined}
+                >
+                    {dietError && <Alert tone="error" className="mb-3">{dietError}</Alert>}
+                    {loadingDiet ? (
+                        <Skeleton className="h-[72px] w-full rounded-xl" />
+                    ) : dietSuccess ? (
+                        <Alert tone="success">Plan updated — your new 30-day template is ready.</Alert>
+                    ) : savingDiet ? (
+                        <div role="status" className="flex items-center gap-3 rounded-xl bg-surface-muted px-4 py-5 text-sm font-medium text-ink">
+                            <Spinner size={18} className="text-accent" /> Generating your new 30-day plan…
+                        </div>
+                    ) : isChangingDiet ? (
+                        <div>
+                            <p className="mb-3 text-sm text-ink-muted">Pick a new plan. This replaces your household’s entire 30-day template.</p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                {DIET_CATEGORIES.map(cat => {
+                                    const isCurrent = dietCategory?.toLowerCase() === cat.id.toLowerCase();
+                                    return (
+                                        <button
+                                            key={cat.id}
+                                            type="button"
+                                            onClick={() => handleChangeDiet(cat.id)}
+                                            disabled={isCurrent}
+                                            aria-pressed={isCurrent}
+                                            className={cn(
+                                                'flex flex-col items-start rounded-xl border p-3.5 text-left transition-colors',
+                                                isCurrent ? 'cursor-default border-accent bg-accent-soft/60' : 'border-line hover:border-line-strong hover:bg-surface-muted',
+                                            )}
+                                        >
+                                            <span className="mb-1.5 text-2xl" aria-hidden="true">{cat.icon}</span>
+                                            <span className="text-sm font-semibold text-ink">{cat.id}</span>
+                                            <span className="text-xs text-ink-muted">{isCurrent ? 'Current plan' : cat.desc}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <Button variant="ghost" size="sm" className="mt-3 -ml-2" onClick={() => setIsChangingDiet(false)}>
+                                {t('common.cancel')}
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-4 rounded-xl bg-surface-muted px-4 py-3.5">
+                            <span className="text-3xl" aria-hidden="true">{currentDiet?.icon || '🍽️'}</span>
+                            <div>
+                                <div className="text-xs font-medium text-ink-muted">Current plan</div>
+                                <div className="text-lg font-semibold text-ink">{dietCategory || 'Custom template'}</div>
+                            </div>
+                        </div>
+                    )}
+                </Section>
+
+                {/* Calendar */}
+                <Section
+                    icon={<Calendar size={18} />}
+                    title="Google Calendar"
+                    description="Meals you’re assigned to cook show up on your calendar."
+                    action={calendarStatus === null ? undefined : calendarStatus.connected ? (
+                        <div className="flex gap-2">
+                            <Button variant="secondary" size="sm" loading={syncingCal} loadingText="Syncing…" leadingIcon={<RefreshCw size={14} aria-hidden="true" />} onClick={handleSyncCalendar}>
+                                Sync now
+                            </Button>
+                            <Button variant="danger-soft" size="sm" loading={disconnectingCal} onClick={handleDisconnectCalendar}>
+                                Disconnect
+                            </Button>
+                        </div>
+                    ) : (
+                        <Button size="sm" leadingIcon={<Calendar size={14} aria-hidden="true" />} onClick={handleConnectCalendar}>
+                            Connect
+                        </Button>
+                    )}
+                >
+                    {calendarStatus === null ? (
+                        <Skeleton className="h-12 w-full rounded-xl" />
+                    ) : calendarStatus.connected ? (
+                        <div className="space-y-2">
+                            <p className="flex items-center gap-2 text-sm font-medium text-success">
+                                <CalendarCheck2 size={16} aria-hidden="true" />
+                                Connected{calendarStatus.email ? ` as ${calendarStatus.email}` : ''}
+                            </p>
+                            <p className="text-sm text-ink-muted">
+                                Events include a reminder, and chef changes update automatically. Use <strong className="font-semibold text-ink">Sync now</strong> to push the next 30 days.
+                            </p>
+                            {syncResult && <Alert tone="info">{syncResult}</Alert>}
+                        </div>
+                    ) : (
+                        <p className="text-sm text-ink-muted">
+                            Each member connects their own Google account; skips and redistributions update the right calendar automatically.
+                        </p>
+                    )}
+                </Section>
+
+                {/* Household */}
+                <Section
+                    icon={<Users size={18} />}
+                    title="Household"
+                    description={user.houseCode ? 'Share the code and PIN so family members can join.' : 'You’re part of a household managed by its owner.'}
+                >
+                    {user.houseCode && user.housePin && (
+                        <div className="mb-5 grid gap-2 sm:grid-cols-2">
+                            <CopyValue label={t('nav.houseCode')} value={user.houseCode} size="lg" />
+                            <CopyValue label={t('nav.housePin')} value={user.housePin} size="lg" />
+                        </div>
+                    )}
+
+                    <h3 className="mb-1 text-sm font-semibold text-ink">
+                        Members {!loadingMembers && <span className="font-normal text-ink-muted">({members.length})</span>}
+                    </h3>
+                    {removeError && <Alert tone="error" className="my-2">{removeError}</Alert>}
+                    {loadingMembers ? (
+                        <div className="space-y-2 pt-2">{[0, 1].map(i => <Skeleton key={i} className="h-12 w-full rounded-xl" />)}</div>
+                    ) : members.length === 0 ? (
+                        <p className="py-3 text-sm text-ink-muted">No members found.</p>
+                    ) : (
+                        <ul className="divide-y divide-line">
+                            {members.map((m) => {
+                                const count = assignmentCounts[m.uid] ?? 0;
+                                const canRemove = isOwner && m.role === 'member' && m.uid !== user.uid;
+                                const isRemoving = removingUid === m.uid;
+                                return (
+                                    <li key={m.uid} className="flex items-center gap-3 py-3">
+                                        <Avatar name={m.label} size={36} />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="truncate text-[15px] font-medium text-ink">
+                                                {m.label}
+                                                {m.uid === user.uid && <span className="font-normal text-ink-muted"> · you</span>}
+                                            </div>
+                                            <div className="text-xs text-ink-muted">
+                                                {m.role === 'user' ? 'Owner' : 'Member'} · {count} upcoming {count === 1 ? 'duty' : 'duties'}
+                                            </div>
+                                        </div>
+                                        {canRemove && (
+                                            <IconButton label={`Remove ${m.label}`} size="sm" variant="ghost" onClick={() => handleRemoveMember(m.uid, m.label)} disabled={isRemoving} className="text-ink-muted hover:bg-danger-soft hover:text-danger">
+                                                {isRemoving ? <Spinner size={16} /> : <Trash2 size={16} />}
+                                            </IconButton>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </Section>
+
+                {/* Cooks */}
+                {isOwner && (
+                    <Section
+                        icon={<ChefHat size={18} />}
+                        title="Cooks"
+                        description="Cooks sign in with their phone number and a PIN."
+                        action={!isAddingCook && !loadingCooks ? (
+                            <Button variant="secondary" size="sm" leadingIcon={<Plus size={15} aria-hidden="true" />} onClick={() => { setIsAddingCook(true); setCookError(''); }}>
+                                Add cook
+                            </Button>
+                        ) : undefined}
+                    >
+                        {loadingCooks ? (
+                            <Skeleton className="h-12 w-full rounded-xl" />
+                        ) : isAddingCook ? (
+                            <form onSubmit={handleAddCook} className="space-y-4 rounded-xl border border-line p-4" noValidate>
+                                <Field label="Cook’s phone number" required error={cookError && !/^\+?\d{7,15}$/.test(cookPhone.trim()) ? cookError : undefined}>
+                                    <TextInput type="tel" inputMode="tel" autoComplete="off" value={cookPhone} onChange={(e) => setCookPhone(e.target.value)} placeholder="+919876543210" />
+                                </Field>
+                                <Field
+                                    label="Login PIN"
+                                    required
+                                    hint="4–6 digits. The cook uses it with their phone number to log in."
+                                    error={cookError && /^\+?\d{7,15}$/.test(cookPhone.trim()) ? cookError : undefined}
+                                >
+                                    <TextInput type="password" inputMode="numeric" autoComplete="new-password" value={cookPin} onChange={(e) => setCookPin(e.target.value)} placeholder="••••" maxLength={6} />
+                                </Field>
+                                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                                    <Button variant="secondary" onClick={() => { setIsAddingCook(false); setCookError(''); setCookPhone(''); setCookPin(''); }}>
+                                        {t('common.cancel')}
+                                    </Button>
+                                    <Button type="submit" loading={savingCook} loadingText="Adding…">Save cook</Button>
+                                </div>
+                            </form>
+                        ) : cooks.length === 0 ? (
+                            <p className="text-sm text-ink-muted">No cook added yet.</p>
+                        ) : (
+                            <ul className="divide-y divide-line">
+                                {cooks.map((cook) => {
+                                    const isRemoving = removingUid === cook.uid;
+                                    const cookName = cook.label || 'Cook';
+                                    return (
+                                        <li key={cook.uid} className="flex items-center gap-3 py-3">
+                                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-strong" aria-hidden="true">
+                                                <ChefHat size={17} />
+                                            </span>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="truncate text-[15px] font-medium text-ink">{cookName}</div>
+                                                <div className="text-xs text-ink-muted">{cook.phoneNumber || '—'}</div>
+                                            </div>
+                                            <IconButton label={`Remove ${cookName}`} size="sm" variant="ghost" onClick={() => handleRemoveCook(cook.uid, cookName)} disabled={isRemoving} className="text-ink-muted hover:bg-danger-soft hover:text-danger">
+                                                {isRemoving ? <Spinner size={16} /> : <Trash2 size={16} />}
+                                            </IconButton>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </Section>
+                )}
+
+                {/* Duties */}
+                {isOwner && (
+                    <Section
+                        icon={<Scale size={18} />}
+                        title="Cooking duties"
+                        description="Reset every day’s Breakfast + Lunch and Dinner assignments and split them evenly."
+                    >
+                        <Button variant="secondary" loading={resettingResp} loadingText="Redistributing…" leadingIcon={<RefreshCw size={15} aria-hidden="true" />} onClick={handleResetResponsibilities}>
+                            Reset and divide equally
+                        </Button>
+                        {resetRespResult && (
+                            <Alert tone={resetRespResult.ok ? 'success' : 'error'} className="mt-3">{resetRespResult.msg}</Alert>
+                        )}
+                    </Section>
+                )}
+            </div>
+        </AppShell>
     );
 }

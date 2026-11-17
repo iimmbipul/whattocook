@@ -5,6 +5,19 @@ import { useRouter } from 'next/navigation';
 import { createNewHousehold, joinHousehold } from '@/lib/auth';
 import { useAuth } from '@/components/AuthProvider';
 import { UserPlus, Home, ArrowRight, ArrowLeft } from 'lucide-react';
+import AuthLayout from '@/components/AuthLayout';
+import { Button } from '@/components/ui/Button';
+import { Alert, Field, TextInput } from '@/components/ui/Field';
+import { Spinner } from '@/components/ui/Spinner';
+
+const DIET_CATEGORIES = [
+    { id: 'Healthy', icon: '🥗', desc: 'Nutritious & low guilt' },
+    { id: 'Vegan', icon: '🌱', desc: 'No animal products' },
+    { id: 'Indian', icon: '🍛', desc: 'Rich & traditional' },
+    { id: 'Balanced', icon: '⚖️', desc: 'Carbs, fats & proteins' },
+    { id: 'Protein-Heavy', icon: '💪', desc: 'Max gains & recovery' },
+    { id: 'Flexible', icon: '🍕', desc: 'A bit of everything' },
+];
 
 export default function OnboardingPage() {
     const router = useRouter();
@@ -77,158 +90,110 @@ export default function OnboardingPage() {
 
     if (!email) return null;
 
+    const backButton = (
+        <Button variant="ghost" size="sm" className="-ml-2 mb-3" leadingIcon={<ArrowLeft size={16} aria-hidden="true" />} onClick={() => { setView('options'); setError(''); }} disabled={loading}>
+            Back
+        </Button>
+    );
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 overflow-hidden relative">
-                
-                {/* Header */}
-                <div className="text-center mb-8">
-                    <div className="text-5xl mb-4">🏠</div>
-                    <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome!</h1>
-                    <p className="text-gray-500 text-sm">Let's get your household set up.</p>
-                    <p className="text-indigo-600 font-medium text-xs mt-2 bg-indigo-50 inline-block px-3 py-1 rounded-full">{email}</p>
+        <AuthLayout
+            title={view === 'category' ? 'Choose a diet plan' : view === 'join' ? 'Join a household' : 'Welcome!'}
+            subtitle={
+                view === 'category' ? 'We’ll generate a 30-day meal plan for your household.'
+                    : view === 'join' ? 'Ask the household owner for the House code and PIN.'
+                        : 'Let’s get your household set up.'
+            }
+            footer={<span>Signed in as <span className="font-medium text-ink">{email}</span></span>}
+        >
+            {error && <Alert tone="error" className="mb-4">{error}</Alert>}
+
+            {view === 'options' && (
+                <div className="space-y-3">
+                    {[
+                        { key: 'category' as const, icon: Home, title: 'Create a new household', body: 'Plan meals and invite your family.' },
+                        { key: 'join' as const, icon: UserPlus, title: 'Join a household', body: 'I have a House code and PIN.' },
+                    ].map(opt => (
+                        <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => { setView(opt.key); setError(''); }}
+                            disabled={loading}
+                            className="group flex w-full items-center gap-4 rounded-xl border border-line p-4 text-left transition-colors hover:border-accent/50 hover:bg-accent-soft/40 disabled:opacity-50"
+                        >
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent-strong" aria-hidden="true">
+                                <opt.icon size={20} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="block text-[15px] font-semibold text-ink">{opt.title}</span>
+                                <span className="block text-sm text-ink-muted">{opt.body}</span>
+                            </span>
+                            <ArrowRight size={18} className="shrink-0 text-ink-subtle transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                        </button>
+                    ))}
                 </div>
+            )}
 
-                {error && (
-                    <div className="mb-6 bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-xl text-sm">
-                        {error}
-                    </div>
-                )}
+            {view === 'join' && (
+                <div>
+                    {backButton}
+                    <form onSubmit={handleJoinHousehold} className="space-y-4">
+                        <Field label="House code" required>
+                            <TextInput
+                                value={houseCode}
+                                onChange={(e) => setHouseCode(e.target.value.toUpperCase())}
+                                className="font-mono uppercase tracking-widest"
+                                placeholder="ABCDEF"
+                                maxLength={6}
+                                autoComplete="off"
+                                autoCapitalize="characters"
+                            />
+                        </Field>
+                        <Field label="House PIN" required>
+                            <TextInput
+                                value={housePin}
+                                onChange={(e) => setHousePin(e.target.value)}
+                                className="font-mono tracking-widest"
+                                placeholder="123456"
+                                maxLength={6}
+                                inputMode="numeric"
+                                autoComplete="off"
+                            />
+                        </Field>
+                        <Button type="submit" size="lg" fullWidth loading={loading} loadingText="Joining…">
+                            Join household
+                        </Button>
+                    </form>
+                </div>
+            )}
 
-                {/* View: Options */}
-                {view === 'options' && (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
-                        <button
-                            onClick={() => { setView('category'); setError(''); }}
-                            disabled={loading}
-                            className="w-full flex items-center p-4 bg-gray-50 hover:bg-indigo-50 border-2 border-transparent hover:border-indigo-100 rounded-xl transition-all group text-left"
-                        >
-                            <div className="bg-indigo-100 text-indigo-600 p-3 rounded-lg mr-4 group-hover:scale-110 transition-transform">
-                                <Home size={24} />
-                            </div>
-                            <div className="flex-1">
-                                <h3 className="font-bold text-gray-800 text-lg">Create a New Team</h3>
-                                <p className="text-sm text-gray-500">I want to manage my own meals</p>
-                            </div>
-                            {loading ? (
-                                <div className="animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent" />
-                            ) : (
-                                <ArrowRight className="text-gray-400 group-hover:text-indigo-600 transition-colors" size={20} />
-                            )}
-                        </button>
-
-                        <button
-                            onClick={() => { setView('join'); setError(''); }}
-                            disabled={loading}
-                            className="w-full flex items-center p-4 bg-gray-50 hover:bg-purple-50 border-2 border-transparent hover:border-purple-100 rounded-xl transition-all group text-left"
-                        >
-                            <div className="bg-purple-100 text-purple-600 p-3 rounded-lg mr-4 group-hover:scale-110 transition-transform">
-                                <UserPlus size={24} />
-                            </div>
-                            <div className="flex-1">
-                                <h3 className="font-bold text-gray-800 text-lg">Join a Team</h3>
-                                <p className="text-sm text-gray-500">I have a House ID and PIN</p>
-                            </div>
-                            <ArrowRight className="text-gray-400 group-hover:text-purple-600 transition-colors" size={20} />
-                        </button>
-                    </div>
-                )}
-
-                {/* View: Join Form */}
-                {view === 'join' && (
-                    <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-                        <button
-                            onClick={() => { setView('options'); setError(''); }}
-                            className="flex items-center text-sm font-medium text-gray-500 hover:text-gray-800 mb-6 transition-colors"
-                        >
-                            <ArrowLeft size={16} className="mr-1" /> Back
-                        </button>
-
-                        <form onSubmit={handleJoinHousehold} className="space-y-5">
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">House ID (Code)</label>
-                                <input
-                                    type="text"
-                                    value={houseCode}
-                                    onChange={(e) => setHouseCode(e.target.value)}
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800 uppercase"
-                                    placeholder="e.g. ABCD12"
-                                    maxLength={6}
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">House PIN</label>
-                                <input
-                                    type="text"
-                                    value={housePin}
-                                    onChange={(e) => setHousePin(e.target.value)}
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800"
-                                    placeholder="e.g. 123456"
-                                    maxLength={6}
-                                    required
-                                />
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3.5 px-4 rounded-xl transition-all duration-200 mt-2 disabled:opacity-50 flex items-center justify-center gap-2"
-                            >
-                                {loading && <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />}
-                                {loading ? 'Joining...' : 'Join Household'}
-                            </button>
-                        </form>
-                    </div>
-                )}
-
-                {/* View: Category Selection */}
-                {view === 'category' && (
-                    <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-                        <button
-                            onClick={() => { setView('options'); setError(''); }}
-                            className="flex items-center text-sm font-medium text-gray-500 hover:text-gray-800 mb-6 transition-colors"
-                        >
-                            <ArrowLeft size={16} className="mr-1" /> Back
-                        </button>
-                        
-                        <div className="mb-6">
-                            <h3 className="text-lg font-bold text-gray-800">Select a Diet Category</h3>
-                            <p className="text-sm text-gray-500">We will instantly generate a 30-day meal plan for you.</p>
+            {view === 'category' && (
+                <div>
+                    {backButton}
+                    {loading ? (
+                        <div role="status" className="flex flex-col items-center gap-3 py-8 text-center">
+                            <Spinner size={26} className="text-accent" />
+                            <p className="text-sm font-medium text-ink">Generating your 30-day plan…</p>
+                            <p className="text-xs text-ink-muted">This can take a few seconds.</p>
                         </div>
-                        
-                        <div className="grid grid-cols-2 gap-3 mb-6">
-                            {[
-                                { id: 'Healthy', icon: '🥗', desc: 'Nutritious & low guilt' },
-                                { id: 'Vegan', icon: '🌱', desc: 'No animal products' },
-                                { id: 'Indian', icon: '🍛', desc: 'Rich & traditional' },
-                                { id: 'Balanced', icon: '⚖️', desc: 'Carbs, fats & proteins' },
-                                { id: 'Protein-Heavy', icon: '💪', desc: 'Max gains & recovery' },
-                                { id: 'Flexible', icon: '🍕', desc: 'A bit of everything' }
-                            ].map(cat => (
+                    ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                            {DIET_CATEGORIES.map(cat => (
                                 <button
                                     key={cat.id}
+                                    type="button"
                                     onClick={() => handleCreateHousehold(cat.id)}
-                                    disabled={loading}
-                                    className="p-3 border-2 border-gray-100 rounded-xl hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left flex flex-col justify-center disabled:opacity-50 bg-white"
+                                    className="flex flex-col items-start rounded-xl border border-line p-3.5 text-left transition-colors hover:border-accent/50 hover:bg-accent-soft/40"
                                 >
-                                    <div className="text-2xl mb-1">{cat.icon}</div>
-                                    <div className="font-bold text-gray-800 text-sm">{cat.id}</div>
-                                    <div className="text-xs text-gray-500 line-clamp-1">{cat.desc}</div>
+                                    <span className="mb-1.5 text-2xl" aria-hidden="true">{cat.icon}</span>
+                                    <span className="text-sm font-semibold text-ink">{cat.id}</span>
+                                    <span className="line-clamp-1 text-xs text-ink-muted">{cat.desc}</span>
                                 </button>
                             ))}
                         </div>
-                        
-                        {loading && (
-                            <div className="flex flex-col items-center justify-center space-y-3 py-4 text-indigo-600 bg-indigo-50 rounded-xl border border-indigo-100">
-                                <div className="animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent" />
-                                <span className="text-sm font-semibold animate-pulse">Generating your 30-day plan...</span>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-            </div>
-        </div>
+                    )}
+                </div>
+            )}
+        </AuthLayout>
     );
 }

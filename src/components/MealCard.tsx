@@ -1,15 +1,21 @@
 'use client';
 
 import { MealItem, UserRole } from '@/types/meal';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import EditMealModal from './EditMealModal';
 import AlternativeMealsModal from './AlternativeMealsModal';
 import AttendingMembersModal from './AttendingMembersModal';
-import { Pencil, Check, Leaf, UserX, UserCheck, Users, Phone, Sparkles, Youtube, Instagram, X } from 'lucide-react';
+import { ChefHat, ChevronDown, Clock, Flame, Leaf, Pencil, Phone, PlayCircle, Shuffle, UserCheck, UserX, Users } from 'lucide-react';
 import { toggleMealAttendance } from '@/lib/firestore';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from './AuthProvider';
 import { actorFromUser } from '@/lib/actor';
+import { cn } from '@/lib/cn';
+import { Card } from './ui/Card';
+import { Badge } from './ui/Badge';
+import { Button, IconButton } from './ui/Button';
+import { Dialog } from './ui/Dialog';
+import { Spinner } from './ui/Spinner';
 
 function getVideoEmbed(url?: string): { src: string; kind: 'youtube' | 'instagram' } | null {
     if (!url) return null;
@@ -39,6 +45,8 @@ function getVideoEmbed(url?: string): { src: string; kind: 'youtube' | 'instagra
     return null;
 }
 
+const MEAL_ICON: Record<'breakfast' | 'lunch' | 'dinner', string> = { breakfast: '☕', lunch: '🥗', dinner: '🍲' };
+
 interface MealCardProps {
     meal: MealItem;
     mealType: 'breakfast' | 'lunch' | 'dinner';
@@ -53,6 +61,8 @@ interface MealCardProps {
     userRole: UserRole;
     responsibleMemberName?: string;
     responsibleMemberPhone?: string;
+    /** uid of the chef for this slot, used to show "you". */
+    responsibleMemberId?: string;
     householdId: string;
 }
 
@@ -61,7 +71,6 @@ export default function MealCard({
     mealType,
     mealId,
     canEdit,
-    phoneNumber,
     attendance,
     guests,
     members,
@@ -70,6 +79,7 @@ export default function MealCard({
     userRole,
     responsibleMemberName,
     responsibleMemberPhone,
+    responsibleMemberId,
     householdId,
     onRefresh
 }: MealCardProps & { onRefresh: () => void }) {
@@ -80,6 +90,7 @@ export default function MealCard({
     const [loadingAttendance, setLoadingAttendance] = useState(false);
     const { t, locale } = useLocale();
     const { user: authUser } = useAuth();
+    const titleId = useId();
 
     // Resolve translated fields: use stored translation if available, fall back to English original
     const tx = (locale !== 'en' && meal.translations?.[locale]) ? meal.translations[locale] : null;
@@ -117,217 +128,183 @@ export default function MealCard({
         }
     };
 
-    const getMealConfig = () => {
-        switch (mealType) {
-            case 'breakfast': return { label: t('mealCard.breakfast'), defaultIcon: '☕' };
-            case 'lunch': return { label: t('mealCard.lunch'), defaultIcon: '🥪' };
-            case 'dinner': return { label: t('mealCard.dinner'), defaultIcon: '🍽️' };
-            default: return { label: t('mealCard.meal'), defaultIcon: '🍽️' };
-        }
-    };
-
-    const config = getMealConfig();
-
+    const label = t(`mealCard.${mealType}`);
     const videoEmbed = getVideoEmbed(meal.recipe_url);
+    const canSetAttendance = canEdit && (userRole === 'user' || userRole === 'member');
+    const chefIsMe = !!responsibleMemberId && responsibleMemberId === currentUserId;
+    const steps = displayInstructions ?? [];
 
     return (
         <>
-            <div className="bg-white rounded-xl p-5 md:p-10 mb-4 shadow-sm border border-brand-light">
-                <div className="flex flex-col gap-6">
-
-                    {/* Top Section: Icon, Meal Names, and Action */}
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            {/* Circular Icon Container */}
-                            <div className="w-14 h-14 bg-brand-light/30 rounded-full flex items-center justify-center shadow-sm overflow-hidden text-2xl text-brand-darkest">
-                                {meal.image_url ? (
-                                    <img src={meal.image_url} alt={displayName} className="w-full h-full object-cover" />
-                                ) : (
-                                    <span>{config.defaultIcon}</span>
-                                )}
-                            </div>
-
-                            {/* Text Info */}
-                            <div className="flex flex-col">
-                                <span className="text-sm font-medium text-brand-dark uppercase tracking-wider">
-                                    {config.label}
-                                </span>
-                                <h3 className="text-xl font-bold text-brand-darkest leading-tight">
-                                    {displayName}
-                                </h3>
-
-                                {/* Cooking For Count & Responsibilities */}
-                                {(totalMembers > 0 || responsibleMemberName) && (
-                                    <div className="flex flex-wrap gap-2 mt-1">
-                                        {totalMembers > 0 && (
-                                            <button
-                                                type="button"
-                                                onClick={(e) => { e.stopPropagation(); setIsMembersOpen(true); }}
-                                                className="flex items-center gap-1.5 text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full w-fit border border-purple-100 hover:bg-purple-100 transition-colors"
-                                            >
-                                                <Users size={14} />
-                                                <span>{t('mealCard.cookingFor')} {cookingForCount}</span>
-                                            </button>
-                                        )}
-
-                                        {responsibleMemberName && (
-                                            <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full w-fit border border-amber-100">
-                                                <span className="text-xs">👑</span>
-                                                <span>{t('mealCard.chef')} {responsibleMemberName}</span>
-                                                {responsibleMemberPhone && (
-                                                    <a
-                                                        href={`tel:${responsibleMemberPhone}`}
-                                                        className="ml-1 p-1 bg-green-100 text-green-600 rounded-full hover:bg-green-200 transition-colors"
-                                                        title={`Call ${responsibleMemberName}`}
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    >
-                                                        <Phone size={12} fill="currentColor" />
-                                                    </a>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div className="flex items-center gap-2 mt-1.5">
-                                    <div className="flex items-center gap-1 text-brand-dark">
-                                        <span className="text-xs">🔥</span>
-                                        <span className="text-sm font-semibold">{meal.calories} kcal</span>
-                                    </div>
-                                    {meal.is_vegetarian && (
-                                        <span className="flex items-center gap-1 text-[10px] font-bold text-brand-secondary bg-brand-secondary/10 px-2 py-0.5 rounded-full uppercase tracking-wide">
-                                            <Leaf size={10} /> {t('mealCard.veg')}
-                                        </span>
-                                    )}
-                                </div>
-                                {/* Ingredients List */}
-                                {displayIngredients && displayIngredients.length > 0 && (
-                                    <p className="text-xs text-brand-dark/70 mt-1 line-clamp-1">
-                                        {displayIngredients.join(', ')}
-                                    </p>
-                                )}
-
-                                {/* Nutrients Section */}
-                                {meal.nutrients && (
-                                    <div className="mt-3 grid grid-cols-4 gap-2 text-center text-[10px] sm:text-xs w-full">
-                                        <div className="bg-brand-light/20 rounded-lg p-1.5 ">
-                                            <span className="block font-bold text-brand-secondary">{meal.nutrients.protein_g}g</span>
-                                            <span className="text-brand-dark/70">{t('mealCard.protein')}</span>
-                                        </div>
-                                        <div className="bg-brand-light/20 rounded-lg p-1.5">
-                                            <span className="block font-bold text-brand-secondary">{meal.nutrients.carbs_g}g</span>
-                                            <span className="text-brand-dark/70">{t('mealCard.carbs')}</span>
-                                        </div>
-                                        <div className="bg-brand-light/20 rounded-lg p-1.5">
-                                            <span className="block font-bold text-brand-secondary">{meal.nutrients.fat_g}g</span>
-                                            <span className="text-brand-dark/70">{t('mealCard.fat')}</span>
-                                        </div>
-                                        <div className="bg-brand-light/20 rounded-lg p-1.5">
-                                            <span className="block font-bold text-brand-secondary">{meal.nutrients.fiber_g}g</span>
-                                            <span className="text-brand-dark/70">{t('mealCard.fiber')}</span>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                        {videoEmbed && (
-                            <button
-                                type="button"
-                                onClick={() => setIsVideoOpen(true)}
-                                title={videoEmbed.kind === 'youtube' ? 'Watch recipe video' : 'Watch recipe reel'}
-                                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-                                    videoEmbed.kind === 'youtube'
-                                        ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100'
-                                        : 'bg-pink-50 text-pink-600 hover:bg-pink-100 border border-pink-100'
-                                }`}
-                            >
-                                {videoEmbed.kind === 'youtube' ? <Youtube size={18} /> : <Instagram size={18} />}
-                            </button>
-                        )}
-                        {/* Action Circle */}
-                        <button
-                            onClick={() => canEdit && setIsModalOpen(true)}
-                            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shrink-0 ${canEdit
-                                ? "bg-brand-primary text-white hover:bg-brand-dark"
-                                : "bg-white text-brand-light shadow-sm border border-brand-light"
-                                }`}
-                        >
-                            {canEdit ? <Pencil size={20} /> : <Check size={20} />}
-                        </button>
-                        </div>
-                    </div>
-
-                    {/* Secondary Actions (Attendance & I am bored) */}
-                    {canEdit && (
-                        <div className="flex items-center justify-between mt-2">
-                            <button
-                                onClick={() => setIsBoredOpen(true)}
-                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-brand-light/20 text-brand-darkest hover:bg-amber-100 hover:text-amber-800 border border-brand-light/40 hover:border-amber-200 transition-all"
-                            >
-                                <Sparkles size={16} />
-                                I'm bored
-                            </button>
-
-                            {(userRole === 'user' || userRole === 'member') && (
-                                <button
-                                    onClick={handleToggleAttendance}
-                                    disabled={loadingAttendance}
-                                    className={`
-                                        flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all
-                                        ${amISkipping
-                                            ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
-                                            : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'}
-                                    `}
-                                >
-                                    {loadingAttendance ? (
-                                        <span className="animate-spin text-xs">⌛</span>
-                                    ) : amISkipping ? (
-                                        <>
-                                            <UserX size={16} />
-                                            {t('mealCard.imSkipping')}
-                                        </>
-                                    ) : (
-                                        <>
-                                            <UserCheck size={16} />
-                                            {t('mealCard.imEating')}
-                                        </>
-                                    )}
-                                </button>
+            <Card className="p-4 sm:p-5">
+                <article aria-labelledby={titleId}>
+                    <div className="flex items-start gap-3 sm:gap-4">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-muted text-2xl" aria-hidden="true">
+                            {meal.image_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={meal.image_url} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                                MEAL_ICON[mealType]
                             )}
                         </div>
-                    )}
 
-                    {/* Cooking Instructions Section */}
-                    {displayInstructions && displayInstructions.length > 0 && (
-                        <div className="border-t border-brand-light/20 pt-3">
-                            <h4 className="text-xs font-bold text-brand-darkest mb-2 flex items-center gap-1.5 uppercase tracking-wider">
-                                <span className="text-sm">👩‍🍳</span> {t('mealCard.instructions')}
-                            </h4>
-                            <ul className="text-xs text-brand-dark space-y-1.5 list-disc list-inside bg-brand-light/10 p-3 rounded-xl leading-relaxed">
-                                {displayInstructions.map((step, idx) => (
-                                    <li key={idx} className="pl-1"><span className="-ml-1">{step}</span></li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-
-                    {/* Calorie Progress Bar Section */}
-                    <div className="space-y-3">
-                        <div className="h-[10px] w-full bg-brand-light rounded-full overflow-hidden">
-                            <div
-                                className="h-full bg-brand-primary rounded-full transition-all duration-700 shadow-[0_0_8px_rgba(82,121,111,0.3)]"
-                                style={{ width: '60%' }}
-                            />
-                        </div>
-                        <div className="flex justify-between items-center text-brand-darkest font-bold">
-                            <span className="text-[13px]">{t('mealCard.totalCalorie')}</span>
-                            <span className="text-[13px]">{t('mealCard.kcalLeft', { amount: 195 })}</span>
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                                <p className="pt-0.5 text-xs font-semibold uppercase tracking-wider text-accent-strong">{label}</p>
+                                <div className="-mr-2 -mt-2 flex shrink-0 items-center">
+                                    {videoEmbed && (
+                                        <IconButton
+                                            label={videoEmbed.kind === 'youtube' ? t('mealCard.watchVideo') : t('mealCard.watchReel')}
+                                            size="sm"
+                                            onClick={() => setIsVideoOpen(true)}
+                                        >
+                                            <PlayCircle size={19} />
+                                        </IconButton>
+                                    )}
+                                    {canEdit && (
+                                        <IconButton label={t('mealCard.edit', { meal: label })} size="sm" onClick={() => setIsModalOpen(true)}>
+                                            <Pencil size={17} />
+                                        </IconButton>
+                                    )}
+                                </div>
+                            </div>
+                            <h3 id={titleId} className="text-lg font-semibold leading-snug text-ink">{displayName}</h3>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-ink-muted">
+                                <span className="inline-flex items-center gap-1">
+                                    <Flame size={14} aria-hidden="true" /> {meal.calories} kcal
+                                </span>
+                                {meal.prep_time_minutes > 0 && (
+                                    <span className="inline-flex items-center gap-1">
+                                        <Clock size={14} aria-hidden="true" /> {t('mealCard.prepTime', { minutes: meal.prep_time_minutes })}
+                                    </span>
+                                )}
+                                {meal.is_vegetarian && (
+                                    <Badge tone="success"><Leaf size={12} aria-hidden="true" /> {t('mealCard.veg')}</Badge>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
-            </div>
+
+                    {displayIngredients && displayIngredients.length > 0 && (
+                        <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-ink-muted">{displayIngredients.join(', ')}</p>
+                    )}
+
+                    {meal.nutrients && (
+                        <dl className="mt-3 grid grid-cols-4 gap-2">
+                            {([
+                                ['protein', meal.nutrients.protein_g],
+                                ['carbs', meal.nutrients.carbs_g],
+                                ['fat', meal.nutrients.fat_g],
+                                ['fiber', meal.nutrients.fiber_g],
+                            ] as const).map(([key, grams]) => (
+                                <div key={key} className="rounded-xl bg-surface-muted px-1 py-2 text-center">
+                                    <dt className="text-[11px] font-medium text-ink-muted">{t(`mealCard.${key}`)}</dt>
+                                    <dd className="text-sm font-semibold text-ink">{grams}g</dd>
+                                </div>
+                            ))}
+                        </dl>
+                    )}
+
+                    {/* Who's eating & who's cooking */}
+                    {(totalMembers > 0 || responsibleMemberName) && (
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                            {totalMembers > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsMembersOpen(true)}
+                                    aria-haspopup="dialog"
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-3 text-[13px] font-semibold text-ink transition-colors hover:border-line-strong hover:bg-surface-muted"
+                                >
+                                    <Users size={14} aria-hidden="true" />
+                                    {t('mealCard.cookingFor')} {cookingForCount}
+                                </button>
+                            )}
+                            <span className="inline-flex h-8 items-center gap-1.5 rounded-full bg-surface-muted pl-3 pr-1 text-[13px] text-ink-muted">
+                                <ChefHat size={14} aria-hidden="true" />
+                                <span>
+                                    {t('mealCard.cookedBy')}:{' '}
+                                    <span className="font-semibold text-ink">
+                                        {responsibleMemberName ? (chefIsMe ? `${responsibleMemberName} (${t('mealCard.you')})` : responsibleMemberName) : t('mealCard.noChef')}
+                                    </span>
+                                </span>
+                                {responsibleMemberPhone && responsibleMemberName && !chefIsMe ? (
+                                    <a
+                                        href={`tel:${responsibleMemberPhone}`}
+                                        className="ml-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-surface text-accent-strong transition-colors hover:bg-accent-soft"
+                                        aria-label={t('mealCard.callChef', { name: responsibleMemberName })}
+                                        title={t('mealCard.callChef', { name: responsibleMemberName })}
+                                    >
+                                        <Phone size={12} aria-hidden="true" />
+                                    </a>
+                                ) : (
+                                    <span className="w-2" aria-hidden="true" />
+                                )}
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Primary actions */}
+                    {canEdit && (
+                        <div className="mt-4 flex items-center gap-2 border-t border-line pt-4">
+                            {canSetAttendance && (
+                                <div role="group" aria-label={t('mealCard.attendanceLabel', { meal: label.toLowerCase() })} className="flex flex-1 rounded-xl bg-surface-muted p-1 sm:flex-none">
+                                    {([
+                                        { skipping: false, text: t('mealCard.eating'), Icon: UserCheck },
+                                        { skipping: true, text: t('mealCard.skipping'), Icon: UserX },
+                                    ]).map(({ skipping, text, Icon }) => {
+                                        const active = amISkipping === skipping;
+                                        return (
+                                            <button
+                                                key={text}
+                                                type="button"
+                                                aria-pressed={active}
+                                                disabled={loadingAttendance}
+                                                onClick={() => { if (!active) handleToggleAttendance(); }}
+                                                className={cn(
+                                                    'inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors duration-150 disabled:cursor-wait sm:flex-none',
+                                                    active
+                                                        ? skipping ? 'bg-surface text-danger shadow-card' : 'bg-surface text-success shadow-card'
+                                                        : 'text-ink-muted hover:text-ink',
+                                                )}
+                                            >
+                                                {loadingAttendance && !active ? <Spinner size={14} /> : <Icon size={15} aria-hidden="true" />}
+                                                {text}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            {/* Icon-only on phones (with an accessible name), labelled from `sm` up */}
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                className="ml-auto h-11 w-11 shrink-0 px-0 sm:h-9 sm:w-auto sm:px-3"
+                                leadingIcon={<Shuffle size={16} aria-hidden="true" />}
+                                onClick={() => setIsBoredOpen(true)}
+                                aria-haspopup="dialog"
+                                title={t('mealCard.swap')}
+                            >
+                                <span className="sr-only sm:not-sr-only">{t('mealCard.swap')}</span>
+                            </Button>
+                        </div>
+                    )}
+
+                    {/* Recipe steps, collapsed by default to keep the day scannable */}
+                    {steps.length > 0 && (
+                        <details className="group mt-4 rounded-xl border border-line">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-muted [&::-webkit-details-marker]:hidden">
+                                <span>{t('mealCard.recipeSteps')} <span className="font-normal text-ink-muted">({steps.length})</span></span>
+                                <ChevronDown size={18} className="text-ink-muted transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
+                            </summary>
+                            <ol className="list-decimal space-y-2 px-4 pb-4 pl-9 text-sm leading-relaxed text-ink-muted marker:font-semibold marker:text-ink-subtle">
+                                {steps.map((step, idx) => (
+                                    <li key={idx} className="pl-1">{step}</li>
+                                ))}
+                            </ol>
+                        </details>
+                    )}
+                </article>
+            </Card>
 
             <EditMealModal
                 meal={meal}
@@ -349,41 +326,22 @@ export default function MealCard({
                 onRefresh={onRefresh}
             />
 
-            {videoEmbed && isVideoOpen && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-                    onClick={() => setIsVideoOpen(false)}
-                >
+            {videoEmbed && (
+                <Dialog open={isVideoOpen} onClose={() => setIsVideoOpen(false)} title={displayName} size="lg" closeLabel={t('common.close')}>
                     <div
-                        className="relative w-full max-w-3xl"
-                        onClick={(e) => e.stopPropagation()}
+                        className="relative w-full overflow-hidden rounded-xl bg-black"
+                        style={{ paddingTop: videoEmbed.kind === 'instagram' ? '125%' : '56.25%' }}
                     >
-                        <button
-                            type="button"
-                            onClick={() => setIsVideoOpen(false)}
-                            className="absolute -top-10 right-0 text-white/90 hover:text-white flex items-center gap-1 text-sm"
-                            aria-label="Close video"
-                        >
-                            <X size={20} /> Close
-                        </button>
-                        <div
-                            className="relative w-full overflow-hidden rounded-xl bg-black shadow-2xl"
-                            style={{
-                                paddingTop: videoEmbed.kind === 'instagram' ? '125%' : '56.25%',
-                                maxHeight: '85vh',
-                            }}
-                        >
-                            <iframe
-                                src={videoEmbed.src}
-                                title={`${displayName} video`}
-                                className="absolute inset-0 h-full w-full"
-                                frameBorder={0}
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                allowFullScreen
-                            />
-                        </div>
+                        <iframe
+                            src={videoEmbed.src}
+                            title={`${displayName} video`}
+                            className="absolute inset-0 h-full w-full"
+                            frameBorder={0}
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowFullScreen
+                        />
                     </div>
-                </div>
+                </Dialog>
             )}
 
             <AttendingMembersModal
@@ -391,7 +349,7 @@ export default function MealCard({
                 onClose={() => setIsMembersOpen(false)}
                 mealId={mealId}
                 mealType={mealType}
-                mealLabel={config.label}
+                mealLabel={label}
                 householdId={householdId}
                 currentUserId={currentUserId}
                 members={members ?? []}

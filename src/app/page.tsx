@@ -1,11 +1,7 @@
-import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
-import Header from '@/components/Header';
 import DashboardContent from '@/components/DashboardContent';
 
-export default async function Home() {
-  // Note: For server-side auth check, we'll rely on client-side redirect
-  // as Firebase auth is primarily client-side
-
+export default function Home() {
+  // Auth is resolved client-side (see AuthProvider); the dashboard redirects
+  // to /login when there is no session.
   return <DashboardContent />;
 }

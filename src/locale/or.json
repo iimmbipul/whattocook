@@ -25,7 +25,9 @@
         "noMealPlan": "ପାଇଁ କୌଣସି ଖାଦ୍ୟ ଯୋଜନା ଉପଲବ୍ଧ ନାହିଁ",
         "today": "📅 ଆଜି",
         "tomorrow": "📅 କାଲି",
-        "totalCalories": "ମୋଟ: {{calories}} କ୍ୟାଲୋରି"
+        "totalCalories": "ମୋଟ: {{calories}} କ୍ୟାଲୋରି",
+        "dayPicker": "ଦିନ ବାଛନ୍ତୁ",
+        "caloriesTotal": "ମୋଟ {{calories}} kcal"
     },
     "mealCard": {
         "breakfast": "ସକାଳ ଜଳଖିଆ",
@@ -43,7 +45,10 @@
         "imEating": "ମୁଁ ଖାଇବି",
         "instructions": "ରାନ୍ଧିବା ନିର୍ଦ୍ଦେଶ",
         "totalCalorie": "ମୋଟ କ୍ୟାଲୋରି",
-        "kcalLeft": "{{amount}} ବଳିଛି"
+        "kcalLeft": "{{amount}} ବଳିଛି",
+        "swap": "ଡିସ୍ ବଦଳାନ୍ତୁ",
+        "prepTime": "{{minutes}} ମିନିଟ୍",
+        "you": "ଆପଣ"
     },
     "attendingModal": {
         "title": "ଏମାନଙ୍କ ପାଇଁ ରୋଷେଇ",
@@ -103,47 +108,47 @@
         "successMessage": "{{count}} ଖାଦ୍ୟ ସଫଳତାର ସହ ଅଦ୍ୟତନ ହେଲା!"
     },
     "adminEditor": {
-        "title": "🗄️ ରଅ ଡେଟା ଏଡିଟର",
+        "title": "ରଅ ଡେଟା ଏଡିଟର",
         "description": "ସମସ୍ତ ଡେଟା JSON ଫର୍ମାଟ୍‌ରେ ଦେଖନ୍ତୁ ଓ ପରିବର୍ତ୍ତନ କରନ୍ତୁ।",
         "selectCollection": "ସଂଗ୍ରହ ଚୟନ କରନ୍ତୁ",
         "dailyMenuOption": "ଦୈନିକ ମେନୁ (ଖାଦ୍ୟ)",
         "usersOption": "ଉପଭୋକ୍ତା",
         "categoryTemplatesOption": "ବର୍ଗ ଟେମ୍ପଲେଟ୍ (AI ମେନୁ)",
         "loadingPlaceholder": "ଡେଟା ଲୋଡ ହେଉଛି...",
-        "refreshButton": "🔄 ଡେଟା ରିଫ୍ରେଶ କରନ୍ତୁ",
-        "updateButton": "💾 ଡେଟାବେସ ଅଦ୍ୟତନ କରନ୍ତୁ",
+        "refreshButton": "ଡେଟା ରିଫ୍ରେଶ କରନ୍ତୁ",
+        "updateButton": "ଡେଟାବେସ ଅଦ୍ୟତନ କରନ୍ତୁ",
         "processingButton": "ପ୍ରକ୍ରିୟା ହେଉଛି...",
-        "warningText": "⚠️ ଅଦ୍ୟତନ ବାକ୍ସରେ ଥିବା ଡେଟା ସହ ଠିକ୍ ମିଳ ଖାଇବ। ନଥିବା IDs ଡେଟାବେସ୍‌ରୁ ବିଲୋପ ହୋଇଯିବ।"
+        "warningText": "ଅଦ୍ୟତନ ବାକ୍ସରେ ଥିବା ଡେଟା ସହ ଠିକ୍ ମିଳ ଖାଇବ। ନଥିବା IDs ଡେଟାବେସ୍‌ରୁ ବିଲୋପ ହୋଇଯିବ।"
     },
     "admin": {
-        "userManagementTitle": "👤 ଉପଭୋକ୍ତା ପରିଚାଳନା",
+        "userManagementTitle": "ଉପଭୋକ୍ତା ପରିଚାଳନା",
         "userManagementDesc": "ନୂଆ ଉପଭୋକ୍ତା ତିଆରି କରନ୍ତୁ ଓ ଭୂମିକା ନ୍ୟସ୍ତ କରନ୍ତୁ",
         "emailLabel": "ଇମେଲ୍ ଠିକଣା",
         "passwordLabel": "ପାସୱାର୍ଡ",
         "passwordHint": "ଅତ୍ତ ୬ ଅକ୍ଷର ହେବା ଦରକାର",
         "passwordPlaceholder": "ସର୍ବନିମ୍ନ ୬ ଅକ୍ଷର",
         "roleLabel": "ଉପଭୋକ୍ତାର ଭୂମିକା",
-        "roleMember": "👤 ସଦସ୍ୟ - ଖାଦ୍ୟ ସଂପାଦନ କରିପାରିବେ (ଆଡ୍ମିନ ନୁହଁ)",
-        "roleOwner": "🔑 ମାଲିକ - ପୂର୍ଣ ପ୍ରବେଶ (ଆଡ୍ମିନ)",
-        "roleCook": "👨‍🍳 ରୋଷେୟା - କେବଳ ଦେଖିପାରିବେ",
+        "roleMember": "ସଦସ୍ୟ - ଖାଦ୍ୟ ସଂପାଦନ କରିପାରିବେ (ଆଡ୍ମିନ ନୁହଁ)",
+        "roleOwner": "ମାଲିକ - ପୂର୍ଣ ପ୍ରବେଶ (ଆଡ୍ମିନ)",
+        "roleCook": "ରୋଷେୟା - କେବଳ ଦେଖିପାରିବେ",
         "phoneLabel": "ଫୋନ ନଂବର",
         "phonePlaceholder": "+1234567890",
         "phoneHint": "କଲ ବଟନ ପାଇଁ ବ୍ୟବହୃତ। ଖାଲି ରଖିଲେ ଘର ମାଲିକଙ୍କ ନଂବର ବ୍ୟବହାର ହେବ।",
-        "createButton": "✨ ଉପଭୋକ୍ତା ତିଆରି କରନ୍ତୁ",
+        "createButton": "ଉପଭୋକ୍ତା ତିଆରି କରନ୍ତୁ",
         "creatingButton": "ଉପଭୋକ୍ତା ତିଆରି ହେଉଛି...",
         "userCreatedSuccess": "ଉପଭୋକ୍ତା ସଫଳତାର ସହ ତିଆରି ହେଲା! ID: {{userId}}",
-        "mealDateTitle": "📅 ଖାଦ୍ୟ ତାରିଖ ପରିଚାଳନା",
+        "mealDateTitle": "ଖାଦ୍ୟ ତାରିଖ ପରିଚାଳନା",
         "mealDateDesc": "ସମସ୍ତ ଖାଦ୍ୟ ତାରିଖ ଚଳିତ ମାସ ଓ ବର୍ଷକୁ ଅଦ୍ୟତନ କରନ୍ତୁ",
         "howItWorksTitle": "ଏହା କିପରି କାମ କରେ:",
         "howItWorks1": "Firestore ରୁ ସମସ୍ତ ଖାଦ୍ୟ ଆଣେ",
         "howItWorks2": "ପ୍ରତ୍ୟେକ ଖାଦ୍ୟ ତାରିଖ ଚଳିତ ବର୍ଷ ଓ ମାସକୁ ଅଦ୍ୟତନ କରେ (ଦିନ ସୁରକ୍ଷିତ ରହେ)",
         "howItWorks3": "ସପ୍ତାହ ଦିନ ମଧ୍ୟ ଅଦ୍ୟତନ କରେ",
         "howItWorks4": "ଉଦାହରଣ: 2025-01-15 → 2026-02-15",
-        "updateDatesButton": "🔄 ସମସ୍ତ ତାରିଖ ଚଳିତ ମାସ ଓ ବର୍ଷକୁ ଅଦ୍ୟତନ କରନ୍ତୁ",
+        "updateDatesButton": "ସମସ୍ତ ତାରିଖ ଚଳିତ ମାସ ଓ ବର୍ଷକୁ ଅଦ୍ୟତନ କରନ୍ତୁ",
         "updatingDatesButton": "ତାରିଖ ଅଦ୍ୟତନ ହେଉଛି...",
-        "updateDatesWarning": "⚠️ ଏହି କ୍ରିୟା ସମସ୍ତ ଖାଦ୍ୟ ଦସ୍ତାବିଜ ପରିବର୍ତ୍ତନ କରିବ। ଆବଶ୍ୟକ ହେଲେ ବ୍ୟାକଅପ ସୁନିଶ୍ଚିତ କରନ୍ତୁ।",
+        "updateDatesWarning": "ଏହି କ୍ରିୟା ସମସ୍ତ ଖାଦ୍ୟ ଦସ୍ତାବିଜ ପରିବର୍ତ୍ତନ କରିବ। ଆବଶ୍ୟକ ହେଲେ ବ୍ୟାକଅପ ସୁନିଶ୍ଚିତ କରନ୍ତୁ।",
         "confirmUpdateDates": "ଏହା ସମସ୍ତ ଖାଦ୍ୟ ତାରିଖ ଚଳିତ ମାସକୁ ଅଦ୍ୟତନ କରିବ। ଜାରି ରଖିବେ କି?",
-        "assignTitle": "👑 ଦୈନିକ ଦାୟିତ୍ୱ ନ୍ୟସ୍ତ କରନ୍ତୁ",
+        "assignTitle": "ଦୈନିକ ଦାୟିତ୍ୱ ନ୍ୟସ୍ତ କରନ୍ତୁ",
         "assignDesc": "ଏକ ବା ଅଧିକ ତାରିଖ ଚୟନ କର ଓ ରାନ୍ଧିବା ପାଇଁ ସଦସ୍ୟ ନ୍ୟସ୍ତ କରନ୍ତୁ",
         "backButton": "← ଡ୍ୟାଶବୋର୍ଡ଼କୁ ଫେରନ୍ତୁ"
     },
@@ -168,5 +173,29 @@
         "guestRemoved": "{{actor}} {{mealType}} ({{mealName}}) ରୁ ଅତିଥି ହଟାଇଲେ",
         "respChanged": "{{actor}} {{slot}} ଦାୟିତ୍ୱ {{toName}} ଙ୍କୁ ଦେଲେ",
         "respBulkChanged": "{{actor}} {{count}} ଦିନର ରୋଷେଇ ଦାୟିତ୍ୱ ଅଦ୍ୟତନ କଲେ"
+    },
+    "common": {
+        "close": "ବନ୍ଦ କରନ୍ତୁ",
+        "cancel": "ବାତିଲ୍",
+        "confirm": "ନିଶ୍ଚିତ କରନ୍ତୁ",
+        "save": "ସେଭ୍ କରନ୍ତୁ",
+        "back": "ପଛକୁ",
+        "retry": "ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ",
+        "copy": "କପି",
+        "copied": "କପି ହେଲା",
+        "loading": "ଲୋଡ୍ ହେଉଛି…"
+    },
+    "nav": {
+        "today": "ଆଜି",
+        "myPlates": "ମୋ ଥାଳି",
+        "profile": "ପ୍ରୋଫାଇଲ୍",
+        "admin": "ଆଡମିନ୍",
+        "language": "ଭାଷା",
+        "logout": "ଲଗ୍ ଆଉଟ୍"
+    },
+    "myPlates": {
+        "title": "ମୋ ଥାଳି",
+        "all": "ସବୁ",
+        "today": "ଆଜି"
     }
 }

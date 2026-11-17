@@ -3,8 +3,11 @@
 import { useAuth } from './AuthProvider';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Header from './Header';
+import { CalendarX2 } from 'lucide-react';
+import AppShell from './AppShell';
 import DatePicker from './DatePicker';
+import { Card, EmptyState } from './ui/Card';
+import { PageLoader, Skeleton } from './ui/Spinner';
 import { canEditMeal } from '@/lib/permissions';
 import { getMealByDate, getMealsByDates } from '@/lib/firestore';
 import { getDashboardData } from '@/lib/pageData';
@@ -151,14 +154,7 @@ export default function DashboardContent() {
     }, [householdId, showMealIfCurrent]);
 
     if (loading) {
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50 flex items-center justify-center">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
-                    <p className="text-gray-700 font-medium">{t('dashboard.loading')}</p>
-                </div>
-            </div>
-        );
+        return <PageLoader label={t('dashboard.loading')} />;
     }
 
     if (!user) {
@@ -173,139 +169,103 @@ export default function DashboardContent() {
     const canEdit = canEditMeal(user.role, dateString);
     const onRefresh = () => { refreshMeal(dateString); };
 
-    // Determine label
-    let label = format(selectedDate, 'EEEE, MMMM do');
-    if (isToday) label = t('dashboard.today');
-    else if (isSameDay(selectedDate, new Date(Date.now() + 86400000))) label = t('dashboard.tomorrow');
+    // Day heading: "Today" / "Tomorrow" / weekday; the full date sits underneath.
+    let label = format(selectedDate, 'EEEE');
+    if (isToday) label = t('nav.today');
+    else if (isSameDay(selectedDate, new Date(Date.now() + 86400000))) label = t('myPlates.tomorrow');
 
-    const renderDayMeals = (
-        meal: MealDocument | null,
-        date: string,
-        label: string,
-        canEdit: boolean,
-        isToday: boolean = false
-    ) => {
+    // Exclude cooks from the "who's eating" universe — they cook but don't count as diners.
+    const eaters = members.filter(m => m.role !== 'cook');
+    const eaterCount = eaters.length || memberCount;
+    const eaterOptions = eaters.map(m => ({ uid: m.uid, label: m.label }));
+    const memberById = (uid?: string) => (uid ? members.find(m => m.uid === uid) : undefined);
+
+    const renderDayMeals = (meal: MealDocument | null, date: string) => {
         if (mealsLoading) {
             return (
-                <div className="flex justify-center py-12">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-purple-600"></div>
+                <div className="space-y-4" aria-busy="true" aria-label={t('dashboard.loading')}>
+                    {[0, 1, 2].map(i => (
+                        <Card key={i} className="p-5">
+                            <div className="flex gap-4">
+                                <Skeleton className="h-14 w-14 rounded-2xl" />
+                                <div className="flex-1 space-y-2.5 pt-1">
+                                    <Skeleton className="h-3 w-20" />
+                                    <Skeleton className="h-5 w-2/3" />
+                                    <Skeleton className="h-3.5 w-1/3" />
+                                </div>
+                            </div>
+                            <Skeleton className="mt-5 h-9 w-full" />
+                        </Card>
+                    ))}
                 </div>
             );
         }
 
         if (!meal) {
             return (
-                <div className="bg-white rounded-xl shadow-lg p-8">
-                    <h2 className="text-2xl sm:text-3xl font-bold text-brand-darkest mb-2">{label}</h2>
-                    <p className="text-brand-dark">{t('dashboard.noMealPlan')} {getFormattedDate(date)}</p>
-                </div>
+                <Card>
+                    <EmptyState
+                        icon={<CalendarX2 size={22} />}
+                        title={t('dashboard.emptyTitle')}
+                        body={t('dashboard.emptyBody', { date: getFormattedDate(date) })}
+                    />
+                </Card>
             );
         }
 
-        // Standard card styling - Mobile: Transparent/Unstyled, Desktop: Card
-        const sectionClasses = 'bg-transparent border-0 shadow-none p-0 md:bg-white md:border md:border-brand-light md:rounded-xl md:shadow-sm md:p-8';
-
-        const editIndicator = canEdit ? '' : '';
-
-        // Exclude cooks from the "who's eating" universe — they cook but don't count as diners.
-        const eaters = members.filter(m => m.role !== 'cook');
-        const eaterCount = eaters.length || memberCount;
-
-        // Helper to get responsible name
-        const getResponsibleName = (uid?: string) => {
-            if (!uid) return undefined;
-            return members.find(m => m.uid === uid)?.label;
-        };
-
-        const getResponsiblePhone = (uid?: string) => {
-            if (!uid) return undefined;
-            return members.find(m => m.uid === uid)?.phoneNumber;
-        };
-
-        const breakfastLunchResp = getResponsibleName(meal.responsibility?.breakfastLunchId);
-        const breakfastLunchPhone = getResponsiblePhone(meal.responsibility?.breakfastLunchId);
-
-        const dinnerResp = getResponsibleName(meal.responsibility?.dinnerId);
-        const dinnerPhone = getResponsiblePhone(meal.responsibility?.dinnerId);
+        const slots = [
+            { type: 'breakfast' as const, item: meal.breakfast, chefId: meal.responsibility?.breakfastLunchId },
+            { type: 'lunch' as const, item: meal.lunch, chefId: meal.responsibility?.breakfastLunchId },
+            { type: 'dinner' as const, item: meal.dinner, chefId: meal.responsibility?.dinnerId },
+        ];
 
         return (
-            <div className={`${sectionClasses} ${editIndicator}`}>
-                <div className="mb-8">
-                    <h2 className="text-2xl sm:text-3xl font-bold text-brand-darkest mb-1">{label}</h2>
-                    <p className="text-brand-dark">{getFormattedDate(date)}</p>
-                    <div className="mt-3 inline-block bg-brand-light/30 text-brand-darkest px-4 py-1.5 rounded-full text-sm font-semibold border border-brand-light">
-                        {t('dashboard.totalCalories', { calories: meal.total_calories })}
-                    </div>
-                </div>
-
-
-                {/* Responsive Grid: Mobile 1 col, Tablet 2 cols, Desktop 3 cols */}
-                <div className="flex flex-col gap-6">
-                    <MealCard
-                        meal={meal.breakfast}
-                        mealType="breakfast"
-                        mealId={date}
-                        canEdit={canEdit}
-                        phoneNumber={user.phoneNumber}
-                        attendance={meal.attendance}
-                        guests={meal.guests}
-                        members={eaters.map(m => ({ uid: m.uid, label: m.label }))}
-                        totalMembers={eaterCount}
-                        currentUserId={user.uid}
-                        userRole={user.role}
-                        responsibleMemberName={breakfastLunchResp}
-                        responsibleMemberPhone={breakfastLunchPhone}
-                        onRefresh={onRefresh}
-                        householdId={user.householdId}
-                    />
-                    <MealCard
-                        meal={meal.lunch}
-                        mealType="lunch"
-                        mealId={date}
-                        canEdit={canEdit}
-                        phoneNumber={user.phoneNumber}
-                        attendance={meal.attendance}
-                        guests={meal.guests}
-                        members={eaters.map(m => ({ uid: m.uid, label: m.label }))}
-                        totalMembers={eaterCount}
-                        currentUserId={user.uid}
-                        userRole={user.role}
-                        responsibleMemberName={breakfastLunchResp}
-                        responsibleMemberPhone={breakfastLunchPhone}
-                        onRefresh={onRefresh}
-                        householdId={user.householdId}
-                    />
-                    <MealCard
-                        meal={meal.dinner}
-                        mealType="dinner"
-                        mealId={date}
-                        canEdit={canEdit}
-                        phoneNumber={user.phoneNumber}
-                        attendance={meal.attendance}
-                        guests={meal.guests}
-                        members={eaters.map(m => ({ uid: m.uid, label: m.label }))}
-                        totalMembers={eaterCount}
-                        currentUserId={user.uid}
-                        userRole={user.role}
-                        responsibleMemberName={dinnerResp}
-                        responsibleMemberPhone={dinnerPhone}
-                        onRefresh={onRefresh}
-                        householdId={user.householdId}
-                    />
-                </div>
+            <div className="space-y-4">
+                {slots.map(({ type, item, chefId }) => {
+                    const chef = memberById(chefId);
+                    return (
+                        <MealCard
+                            key={type}
+                            meal={item}
+                            mealType={type}
+                            mealId={date}
+                            canEdit={canEdit}
+                            phoneNumber={user.phoneNumber}
+                            attendance={meal.attendance}
+                            guests={meal.guests}
+                            members={eaterOptions}
+                            totalMembers={eaterCount}
+                            currentUserId={user.uid}
+                            userRole={user.role}
+                            responsibleMemberName={chef?.label}
+                            responsibleMemberPhone={chef?.phoneNumber}
+                            responsibleMemberId={chefId}
+                            onRefresh={onRefresh}
+                            householdId={user.householdId}
+                        />
+                    );
+                })}
             </div>
         );
     };
 
     return (
-        <div className="min-h-screen bg-brand-light/30">
-            <Header />
-            <main className="container mx-auto p-2 md:p-6">
-                <DatePicker selectedDate={selectedDate} onDateSelect={setSelectedDate} />
-                <div className="space-y-6 mt-4 md:space-y-12 md:mt-8">
-                    {renderDayMeals(selectedMeal, dateString, label, canEdit, isToday)}
+        <AppShell>
+            <DatePicker selectedDate={selectedDate} onDateSelect={setSelectedDate} />
+
+            <div className="mb-4 mt-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+                <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-[28px]">{label}</h1>
+                    <p className="mt-0.5 text-[15px] text-ink-muted">{format(selectedDate, 'EEEE, MMMM d, yyyy')}</p>
                 </div>
-            </main>
-        </div>
+                {!mealsLoading && selectedMeal && (
+                    <p className="text-sm font-semibold text-ink-muted">
+                        {t('dashboard.caloriesTotal', { calories: selectedMeal.total_calories })}
+                    </p>
+                )}
+            </div>
+
+            {renderDayMeals(selectedMeal, dateString)}
+        </AppShell>
     );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Flame, Scale, Pizza, Search, CheckCircle, Utensils, Sparkles } from 'lucide-react';
+import { Flame, Scale, Pizza, Sparkles, ChevronRight, RefreshCw, SearchX } from 'lucide-react';
 import {
     fetchAlternativeMeals,
     fetchFancyMealsLikeOurs,
@@ -15,6 +15,13 @@ import { supportedLocales } from '@/lib/i18n';
 import { MealItem, MealItemTranslation } from '@/types/meal';
 import { useAuth } from './AuthProvider';
 import { actorFromUser } from '@/lib/actor';
+import { useLocale } from '@/context/LocaleContext';
+import { cn } from '@/lib/cn';
+import { Dialog } from './ui/Dialog';
+import { Button } from './ui/Button';
+import { Alert } from './ui/Field';
+import { Skeleton, Spinner } from './ui/Spinner';
+import { EmptyState } from './ui/Card';
 
 interface AlternativeMealsModalProps {
     isOpen: boolean;
@@ -88,13 +95,19 @@ export default function AlternativeMealsModal({
     onRefresh
 }: AlternativeMealsModalProps) {
     const { user: authUser } = useAuth();
+    const { t } = useLocale();
     const [activeTab, setActiveTab] = useState<TabType>('fancy');
     const [mealsMap, setMealsMap] = useState<Record<TabType, AlternativeMeal[]>>(EMPTY_MEALS);
     const fetchedTabs = useRef<Set<string>>(new Set());
     // The 30-day menu is read once per modal opening and reused.
     const menuRef = useRef<HouseholdMenu | null>(null);
     const [isLoadingMeals, setIsLoadingMeals] = useState<boolean>(false);
+    const [loadError, setLoadError] = useState(false);
+    const [reloadToken, setReloadToken] = useState(0);
+    // A suggestion the user picked but hasn't confirmed yet.
+    const [pending, setPending] = useState<AlternativeMeal | null>(null);
     const [updatingMealName, setUpdatingMealName] = useState<string | null>(null);
+    const [swapError, setSwapError] = useState(false);
 
     // Reset fetched tabs when the modal closes or meal name changes
     useEffect(() => {
@@ -103,6 +116,9 @@ export default function AlternativeMealsModal({
             menuRef.current = null;
             setMealsMap(EMPTY_MEALS);
             setActiveTab('fancy');
+            setPending(null);
+            setSwapError(false);
+            setLoadError(false);
         }
     }, [isOpen, currentMealName]);
 
@@ -112,8 +128,10 @@ export default function AlternativeMealsModal({
         const cacheKey = `${currentMealName}-${activeTab}`;
         if (fetchedTabs.current.has(cacheKey)) return;
 
+        let cancelled = false;
         const loadMeals = async () => {
             setIsLoadingMeals(true);
+            setLoadError(false);
             try {
                 let results: AlternativeMeal[];
                 if (activeTab === 'fancy') {
@@ -122,6 +140,7 @@ export default function AlternativeMealsModal({
                 } else {
                     results = await fetchAlternativeMeals(currentMealName, activeTab);
                 }
+                if (cancelled) return;
                 setMealsMap(prev => ({
                     ...prev,
                     [activeTab]: results
@@ -129,21 +148,22 @@ export default function AlternativeMealsModal({
                 fetchedTabs.current.add(cacheKey);
             } catch (err) {
                 console.error("Failed to load alternatives:", err);
+                if (!cancelled) setLoadError(true);
             } finally {
-                setIsLoadingMeals(false);
+                if (!cancelled) setIsLoadingMeals(false);
             }
         };
 
         loadMeals();
-    }, [isOpen, activeTab, currentMealName, mealType, householdId]);
+        return () => { cancelled = true; };
+    }, [isOpen, activeTab, currentMealName, mealType, householdId, reloadToken]);
 
-    if (!isOpen) return null;
-
+    const mealLabel = t(`mealCard.${mealType}`);
     const tabs = [
-        { id: 'fancy' as TabType, label: 'Fancy, like ours', icon: Sparkles },
-        { id: 'protein' as TabType, label: 'High on protein', icon: Flame },
-        { id: 'balanced' as TabType, label: 'Balanced meal', icon: Scale },
-        { id: 'unhealthy' as TabType, label: 'no no no', icon: Pizza },
+        { id: 'fancy' as TabType, label: t('swap.tabFancy'), icon: Sparkles },
+        { id: 'protein' as TabType, label: t('swap.tabProtein'), icon: Flame },
+        { id: 'balanced' as TabType, label: t('swap.tabBalanced'), icon: Scale },
+        { id: 'unhealthy' as TabType, label: t('swap.tabTreat'), icon: Pizza },
     ];
 
     const currentMeals = mealsMap[activeTab];
@@ -151,6 +171,7 @@ export default function AlternativeMealsModal({
     const handleSelectMeal = async (selectedMeal: AlternativeMeal) => {
         if (updatingMealName) return; // Prevent multiple clicks
         setUpdatingMealName(selectedMeal.item_name);
+        setSwapError(false);
 
         try {
             // 1. Generate full meal details via AI
@@ -193,115 +214,117 @@ export default function AlternativeMealsModal({
 
         } catch (error) {
             console.error("Error updating meal:", error);
-            alert("Failed to update meal. Please try again.");
+            setSwapError(true);
         } finally {
             setUpdatingMealName(null);
         }
     };
 
+    const busy = !!updatingMealName;
+
+    // Step 2: confirm the chosen dish before anything is overwritten.
+    const confirmFooter = pending ? (
+        <>
+            <Button variant="secondary" onClick={() => { setPending(null); setSwapError(false); }} disabled={busy}>
+                {t('common.back')}
+            </Button>
+            <Button onClick={() => handleSelectMeal(pending)} loading={busy} loadingText={t('swap.updating', { name: pending.item_name })}>
+                {t('swap.confirmButton')}
+            </Button>
+        </>
+    ) : undefined;
+
     return (
-        <div className="fixed inset-0 bg-brand-darkest/60 backdrop-blur-md flex items-end sm:items-center justify-center z-[60] sm:p-4 animate-in fade-in duration-200">
-            {/* Half modal on mobile, centered modal on desktop */}
-            <div className="bg-white/95 rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col border border-white/20">
-                {/* Drag handle for mobile */}
-                <div className="w-full flex justify-center pt-3 pb-1 sm:hidden">
-                    <div className="w-12 h-1.5 bg-brand-light/40 rounded-full" />
-                </div>
-
-                {/* Header */}
-                <div className="px-6 py-4 border-b border-brand-light/20 flex items-center justify-between">
-                    <div>
-                        <h2 className="text-xl font-bold text-brand-darkest flex items-center gap-2">
-                            <Utensils size={20} className="text-brand-primary" />
-                            Alternative Meals
-                        </h2>
-                        <p className="text-xs text-brand-dark mt-0.5">We will swap your <strong>{currentMealName}</strong></p>
-                    </div>
-                    <button onClick={onClose} className="p-2 hover:bg-brand-light/20 rounded-full text-brand-dark/50 transition-colors">
-                        <X size={20} />
-                    </button>
-                </div>
-
-                {/* Tabs */}
-                <div className="px-4 py-3 border-b border-brand-light/20 bg-brand-light/5 flex overflow-x-auto custom-scrollbar gap-2 shrink-0">
-                    {tabs.map((tab) => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        return (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                disabled={!!updatingMealName}
-                                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap ${isActive
-                                    ? 'bg-brand-primary text-white shadow-md shadow-brand-primary/20 scale-105'
-                                    : 'bg-white text-brand-dark border border-brand-light/30 hover:bg-brand-light/20'
-                                    }`}
-                            >
-                                <Icon size={16} />
-                                {tab.label}
-                            </button>
-                        );
-                    })}
-                </div>
-
-                {/* Body / Meals List */}
-                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar relative">
-                    {updatingMealName && (
-                        <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center shrink-0">
-                            <div className="w-10 h-10 border-4 border-brand-primary/30 border-t-brand-primary rounded-full animate-spin mb-4" />
-                            <p className="font-bold text-brand-darkest text-lg">Updating details...</p>
-                            <p className="text-sm text-brand-dark mt-1 text-center max-w-xs">Generating recipe & translations for {updatingMealName}</p>
+        <Dialog
+            open={isOpen}
+            onClose={onClose}
+            dismissible={!busy}
+            title={pending ? t('swap.confirmTitle', { name: pending.item_name }) : t('swap.title', { meal: mealLabel.toLowerCase() })}
+            description={pending ? undefined : t('swap.subtitle', { name: currentMealName })}
+            closeLabel={t('common.close')}
+            footer={confirmFooter}
+        >
+            {pending ? (
+                <div className="space-y-4">
+                    {pending.description && <p className="text-[15px] leading-relaxed text-ink">{pending.description}</p>}
+                    <p className="text-sm text-ink-muted">
+                        {t('swap.confirmBody', { name: pending.item_name, meal: mealLabel.toLowerCase() })}
+                    </p>
+                    {swapError && <Alert tone="error">{t('swap.failed')}</Alert>}
+                    {busy && (
+                        <div className="flex items-center gap-2 text-sm text-ink-muted" role="status">
+                            <Spinner size={16} /> {t('editMeal.aiWriting')}
                         </div>
                     )}
+                </div>
+            ) : (
+                <>
+                    <div role="group" aria-label={t('swap.title', { meal: mealLabel.toLowerCase() })} className="-mx-5 mb-4 flex gap-2 overflow-x-auto px-5 pb-1 scrollbar-hide sm:-mx-6 sm:px-6">
+                        {tabs.map((tab) => {
+                            const Icon = tab.icon;
+                            const isActive = activeTab === tab.id;
+                            return (
+                                <button
+                                    key={tab.id}
+                                    type="button"
+                                    onClick={() => setActiveTab(tab.id)}
+                                    aria-pressed={isActive}
+                                    className={cn(
+                                        'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold transition-colors duration-150',
+                                        isActive ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink',
+                                    )}
+                                >
+                                    <Icon size={15} aria-hidden="true" />
+                                    {tab.label}
+                                </button>
+                            );
+                        })}
+                    </div>
 
                     {isLoadingMeals ? (
-                        <div className="flex flex-col items-center justify-center py-12 text-brand-dark">
-                            <Search className="animate-bounce text-brand-primary mb-2" size={32} />
-                            <p className="font-medium animate-pulse">
-                                {activeTab === 'fancy' ? 'Reading your 30-day menu...' : 'Finding nice options...'}
+                        <div className="space-y-2" role="status" aria-label={activeTab === 'fancy' ? t('swap.loadingMenu') : t('swap.loading')}>
+                            <p className="mb-3 flex items-center gap-2 text-sm text-ink-muted">
+                                <Spinner size={14} />
+                                {activeTab === 'fancy' ? t('swap.loadingMenu') : t('swap.loading')}
                             </p>
+                            {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-[72px] w-full rounded-2xl" />)}
                         </div>
+                    ) : loadError ? (
+                        <EmptyState
+                            icon={<SearchX size={22} />}
+                            title={t('swap.error')}
+                            action={
+                                <Button variant="secondary" size="sm" leadingIcon={<RefreshCw size={15} aria-hidden="true" />} onClick={() => setReloadToken(n => n + 1)}>
+                                    {t('common.retry')}
+                                </Button>
+                            }
+                        />
                     ) : currentMeals.length === 0 ? (
-                        <div className="text-center py-10 text-brand-dark/60">
-                            No suggestions found.
-                        </div>
+                        <EmptyState icon={<SearchX size={22} />} title={t('swap.empty')} />
                     ) : (
-                        <div className="space-y-3">
-                            {activeTab === 'fancy' && (
-                                <p className="text-xs text-brand-dark/70 px-1">
-                                    Special dishes in the style of your 30-day menu, with nothing you already have.
-                                </p>
-                            )}
-                            {currentMeals.map((m, idx) => (
-                                <button
-                                    key={idx}
-                                    onClick={() => handleSelectMeal(m)}
-                                    disabled={!!updatingMealName}
-                                    className="w-full text-left bg-white border border-brand-light/40 rounded-2xl p-4 hover:border-brand-primary/50 hover:shadow-md transition-all group flex items-start gap-4"
-                                >
-                                    <div className="w-10 h-10 rounded-full bg-brand-light/20 flex items-center justify-center shrink-0 text-xl group-hover:bg-brand-light/50 transition-colors">
-                                        ✨
-                                    </div>
-                                    <div className="flex-1">
-                                        <h4 className="font-bold text-brand-darkest group-hover:text-brand-primary transition-colors">
-                                            {m.item_name}
-                                        </h4>
-                                        <p className="text-xs text-brand-dark/70 mt-1 line-clamp-2 leading-relaxed">
-                                            {m.description}
-                                        </p>
-                                    </div>
-                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity self-center">
-                                        <CheckCircle className="text-brand-primary" size={20} />
-                                    </div>
-                                </button>
-                            ))}
+                        <div className="space-y-2">
+                            {activeTab === 'fancy' && <p className="mb-3 text-sm text-ink-muted">{t('swap.fancyIntro')}</p>}
+                            <ul className="space-y-2">
+                                {currentMeals.map((m, idx) => (
+                                    <li key={idx}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPending(m)}
+                                            className="group flex w-full items-center gap-3 rounded-2xl border border-line bg-surface p-4 text-left transition-colors hover:border-accent/50 hover:bg-accent-soft/40"
+                                        >
+                                            <div className="min-w-0 flex-1">
+                                                <p className="font-semibold text-ink">{m.item_name}</p>
+                                                {m.description && <p className="mt-0.5 line-clamp-2 text-sm leading-relaxed text-ink-muted">{m.description}</p>}
+                                            </div>
+                                            <ChevronRight size={18} className="shrink-0 text-ink-subtle transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
                     )}
-                </div>
-
-                {/* Safe area padding for mobile */}
-                <div className="pb-safe sm:pb-0" />
-            </div>
-        </div>
+                </>
+            )}
+        </Dialog>
     );
 }
