@@ -113,27 +113,36 @@ function parseMealDoc(docSnap: any): MealDocument {
 }
 
 /**
- * Try to find a meal doc by dayId in a given collection, with fallback to unpadded ID.
+ * Candidate doc refs for `id` in priority order: the ID itself, then its
+ * unpadded form for day-of-month IDs ("07" → "7"). Full dates have no
+ * unpadded form (parseInt("2026-03-17") would yield the meaningless "2026").
  */
-async function findDocInCollection(collectionName: string, dayId: string): Promise<MealDocument | null> {
-    const mealRef = doc(db, collectionName, dayId);
-    const mealSnap = await getDoc(mealRef);
-
-    if (mealSnap.exists()) {
-        return parseMealDoc(mealSnap);
+function candidatesFor(collectionName: string, id: string): Array<[string, string]> {
+    const candidates: Array<[string, string]> = [[collectionName, id]];
+    if (/^\d{1,2}$/.test(id)) {
+        const unpadded = parseInt(id, 10).toString();
+        if (unpadded !== id) candidates.push([collectionName, unpadded]);
     }
+    return candidates;
+}
 
-    // Fallback: try the unpadded version (e.g. "1" if padded "01" wasn't found)
-    const unpaddedId = parseInt(dayId, 10).toString();
-    if (unpaddedId !== dayId) {
-        const altRef = doc(db, collectionName, unpaddedId);
-        const altSnap = await getDoc(altRef);
-        if (altSnap.exists()) {
-            return parseMealDoc(altSnap);
-        }
-    }
+/**
+ * Read all candidates in one parallel round trip and return the first that
+ * exists, honouring the given priority order. Replaces chains of sequential
+ * getDoc calls, where every miss cost another full Firestore round trip.
+ */
+async function firstExistingDoc(candidates: Array<[string, string]>): Promise<MealDocument | null> {
+    const seen = new Set<string>();
+    const unique = candidates.filter(([c, id]) => {
+        const key = `${c}/${id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 
-    return null;
+    const snaps = await Promise.all(unique.map(([c, id]) => getDoc(doc(db, c, id))));
+    const hit = snaps.find(snap => snap.exists());
+    return hit ? parseMealDoc(hit) : null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -148,26 +157,57 @@ export async function getMealByDate(date: string, householdId?: string): Promise
     try {
         const access = await authorizeHousehold('getMealByDate', householdId);
         if (!access || !isValidMealId(date)) return null;
-        householdId = access.householdId;
-
-        const hhCollection = getHouseholdCollection(householdId);
-
-        // 1. Try specific date in household (e.g. 2026-03-17)
-        let meal = await findDocInCollection(hhCollection, date);
-        if (meal) return meal;
-
-        const docId = getDayId(date);
-
-        // 2. Try generic day in household
-        meal = await findDocInCollection(hhCollection, docId);
-        if (meal) return meal;
-
-        // 3. Fallback to master template
-        return await findDocInCollection(TEMPLATES_COLLECTION, docId);
+        return await lookupMealByDate(date, access.householdId);
     } catch (error) {
         console.error('Error fetching meal by date:', error);
         return null;
     }
+}
+
+/**
+ * Meals for several days (YYYY-MM-DD) in one call: a single authorization
+ * check, then all lookups in parallel. Used to prefetch the dashboard's date
+ * strip; calling getMealByDate per day would re-check the session each time.
+ */
+export async function getMealsByDates(
+    dates: string[],
+    householdId?: string
+): Promise<Record<string, MealDocument | null>> {
+    try {
+        const access = await authorizeHousehold('getMealsByDates', householdId);
+        if (!access || !Array.isArray(dates)) return {};
+        const valid = Array.from(new Set(
+            dates.filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && isValidMealId(d))
+        )).slice(0, 31);
+        const meals = await Promise.all(valid.map(d =>
+            lookupMealByDate(d, access.householdId).catch(error => {
+                console.error('Error fetching meal by date:', error);
+                return null;
+            })
+        ));
+        return Object.fromEntries(valid.map((d, i) => [d, meals[i]]));
+    } catch (error) {
+        console.error('Error fetching meals by dates:', error);
+        return {};
+    }
+}
+
+/**
+ * Unguarded lookup — callers must authorize the household first. Not exported:
+ * every export of this 'use server' module is a public endpoint.
+ */
+async function lookupMealByDate(date: string, householdId: string): Promise<MealDocument | null> {
+    const hhCollection = getHouseholdCollection(householdId);
+    const docId = getDayId(date);
+
+    // Same priority as always — 1. specific date in household (e.g. 2026-03-17),
+    // 2. generic day in household, 3. master template — but the candidates are
+    // fetched in parallel instead of one sequential read per miss.
+    return firstExistingDoc([
+        ...candidatesFor(hhCollection, date),
+        ...candidatesFor(hhCollection, docId),
+        ...candidatesFor(TEMPLATES_COLLECTION, docId),
+    ]);
 }
 
 /**
@@ -210,14 +250,15 @@ async function ensureHouseholdDoc(docId: string, householdId: string): Promise<b
 
     if (isFullDate) {
         const dayId = getDayId(docId);
-        // Try household unpadded/padded
-        fallbackDoc = await findDocInCollection(hhCollection, dayId);
-        if (!fallbackDoc) fallbackDoc = await findDocInCollection(hhCollection, parseInt(dayId, 10).toString());
-        if (!fallbackDoc) fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, dayId);
+        // Household generic day (padded, then unpadded), then the template —
+        // looked up in one parallel round trip.
+        fallbackDoc = await firstExistingDoc([
+            ...candidatesFor(hhCollection, dayId),
+            ...candidatesFor(TEMPLATES_COLLECTION, dayId),
+        ]);
     } else {
         // Just day ID, fallback is template
-        fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, docId);
-        if (!fallbackDoc) fallbackDoc = await findDocInCollection(TEMPLATES_COLLECTION, parseInt(docId, 10).toString());
+        fallbackDoc = await firstExistingDoc(candidatesFor(TEMPLATES_COLLECTION, docId));
     }
 
     if (!fallbackDoc) {
@@ -304,13 +345,14 @@ export async function updateMeal(
             }
         }
 
-        if (actor) {
+        const notify = async () => {
+            if (!actor) return;
             for (const type of ['breakfast', 'lunch', 'dinner'] as const) {
                 const next = (updates as any)?.[type] as MealItem | undefined;
                 if (!next) continue;
                 const prev = prevData?.[type] as MealItem | undefined;
                 if (prev && prev.item_name === next.item_name) continue;
-                await createNotification(householdId, {
+                await createNotification(access.householdId, {
                     type: 'meal_updated',
                     actorId: actor.uid,
                     actorName: actor.name,
@@ -323,11 +365,16 @@ export async function updateMeal(
                     },
                 });
             }
-        }
+        };
 
-        // Push updated meal details to the chef's Google Calendar (only
-        // meaningful for specific-date docs; template days are skipped).
-        if (isFullDate) await syncMealCalendarAsync(householdId, mealId);
+        // Notifications and the calendar push are independent, so run them
+        // side by side instead of one after the other. Push updated meal
+        // details to the chef's Google Calendar (only meaningful for
+        // specific-date docs; template days are skipped).
+        await Promise.all([
+            notify(),
+            isFullDate ? syncMealCalendarAsync(householdId, mealId) : undefined,
+        ]);
 
         return true;
     } catch (error) {
@@ -419,23 +466,25 @@ export async function toggleMealAttendance(
             }
         }
 
-        if (actor) {
-            await createNotification(householdId, {
-                type: isSkipping ? 'meal_skipped' : 'meal_unskipped',
-                actorId: actor.uid,
-                actorName: actor.name,
-                date: mealId,
-                mealType,
-                payload: {
-                    mealName: (data as any)?.[mealType]?.item_name ?? '',
-                },
-            });
-        }
-
-        // Attendance toggles can hand off / restore a chef assignment
-        // (see reassignSkippedSlot). Sync so the affected chef's calendar
-        // reflects the current owner of the slot.
-        await syncMealCalendarAsync(householdId, mealId);
+        // The notification and the calendar sync are independent; run them in
+        // parallel. Attendance toggles can hand off / restore a chef assignment
+        // (see reassignSkippedSlot) — that has already been written above — so
+        // the sync reflects the current owner of the slot.
+        await Promise.all([
+            actor
+                ? createNotification(householdId, {
+                    type: isSkipping ? 'meal_skipped' : 'meal_unskipped',
+                    actorId: actor.uid,
+                    actorName: actor.name,
+                    date: mealId,
+                    mealType,
+                    payload: {
+                        mealName: (data as any)?.[mealType]?.item_name ?? '',
+                    },
+                })
+                : undefined,
+            syncMealCalendarAsync(householdId, mealId),
+        ]);
 
         return true;
     } catch (error) {
@@ -601,21 +650,22 @@ export async function updateMealResponsibility(
             [fieldPath]: userId || null
         });
 
-        if (actor) {
-            await createNotification(householdId, {
-                type: 'responsibility_changed',
-                actorId: actor.uid,
-                actorName: actor.name,
-                date: mealId,
-                payload: {
-                    slot,
-                    fromName: memberNames?.fromName ?? '',
-                    toName: memberNames?.toName ?? '',
-                },
-            });
-        }
-
-        await syncMealCalendarAsync(householdId, mealId);
+        await Promise.all([
+            actor
+                ? createNotification(householdId, {
+                    type: 'responsibility_changed',
+                    actorId: actor.uid,
+                    actorName: actor.name,
+                    date: mealId,
+                    payload: {
+                        slot,
+                        fromName: memberNames?.fromName ?? '',
+                        toName: memberNames?.toName ?? '',
+                    },
+                })
+                : undefined,
+            syncMealCalendarAsync(householdId, mealId),
+        ]);
 
         return true;
     } catch (error) {
@@ -660,11 +710,11 @@ export async function bulkUpdateMealResponsibility(
 
         const hhCollection = getHouseholdCollection(householdId);
 
-        // Ensure all household docs exist first (copy-on-write)
-        for (const dateStr of dates) {
-            const docId = dateStr; // Specific date
-            await ensureHouseholdDoc(docId, householdId);
-        }
+        // Ensure all household docs exist first (copy-on-write). Each date is a
+        // separate doc, so they can be checked/copied concurrently.
+        await Promise.all(
+            Array.from(new Set(dates)).map(dateStr => ensureHouseholdDoc(dateStr, access.householdId))
+        );
 
         const batch = writeBatch(db);
         let count = 0;
@@ -691,28 +741,34 @@ export async function bulkUpdateMealResponsibility(
 
         await batch.commit();
 
-        if (count > 0) {
+        const syncCalendars = async () => {
+            if (count === 0) return;
             // Fan out calendar sync per changed date. Kept sequential to
             // avoid hammering Google's API when a full month is redistributed.
             for (const dateStr of dates) {
-                await syncMealCalendarAsync(householdId, dateStr);
+                await syncMealCalendarAsync(access.householdId, dateStr);
             }
-        }
+        };
 
-        if (actor && count > 0) {
-            await createNotification(householdId, {
-                type: 'responsibility_bulk_changed',
-                actorId: actor.uid,
-                actorName: actor.name,
-                payload: {
-                    count,
-                    breakfastLunchName: memberNames?.breakfastLunchName ?? '',
-                    dinnerName: memberNames?.dinnerName ?? '',
-                    hasBL: updates.breakfastLunchId !== undefined ? 1 : 0,
-                    hasDinner: updates.dinnerId !== undefined ? 1 : 0,
-                },
-            });
-        }
+        // The notification doesn't depend on the calendar sync, so don't make
+        // it wait behind the whole sequential sync loop.
+        await Promise.all([
+            syncCalendars(),
+            actor && count > 0
+                ? createNotification(householdId, {
+                    type: 'responsibility_bulk_changed',
+                    actorId: actor.uid,
+                    actorName: actor.name,
+                    payload: {
+                        count,
+                        breakfastLunchName: memberNames?.breakfastLunchName ?? '',
+                        dinnerName: memberNames?.dinnerName ?? '',
+                        hasBL: updates.breakfastLunchId !== undefined ? 1 : 0,
+                        hasDinner: updates.dinnerId !== undefined ? 1 : 0,
+                    },
+                })
+                : undefined,
+        ]);
 
         return { success: true, updated: count };
     } catch (error: any) {
@@ -898,20 +954,20 @@ export async function getAllMeals(householdId?: string): Promise<MealDocument[]>
         if (!access) return [];
         householdId = access.householdId;
 
-        // 1. Load all templates
-        const templatesRef = collection(db, TEMPLATES_COLLECTION);
-        const templateSnapshot = await getDocs(templatesRef);
-        const templateMap = new Map<string, MealDocument>();
+        // Load all templates and the household overrides in parallel.
+        const hhCollection = getHouseholdCollection(householdId);
+        const [templateSnapshot, hhSnapshot] = await Promise.all([
+            getDocs(collection(db, TEMPLATES_COLLECTION)),
+            getDocs(collection(db, hhCollection)),
+        ]);
 
+        // 1. Templates
+        const templateMap = new Map<string, MealDocument>();
         templateSnapshot.forEach((docSnap) => {
             templateMap.set(docSnap.id, parseMealDoc(docSnap));
         });
 
-        // 2. Load household overrides
-        const hhCollection = getHouseholdCollection(householdId);
-        const hhRef = collection(db, hhCollection);
-        const hhSnapshot = await getDocs(hhRef);
-
+        // 2. Household overrides
         hhSnapshot.forEach((docSnap) => {
             // Override template entry with household data
             templateMap.set(docSnap.id, parseMealDoc(docSnap));

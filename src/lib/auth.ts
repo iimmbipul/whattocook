@@ -668,10 +668,17 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
         const householdId = currentUser.householdId || getHouseholdId(currentUser.role, currentUser.uid, currentUser.linkedUserId);
         const members: { uid: string; email: string; role: string; label: string; phoneNumber?: string }[] = [];
 
-        // 1. Fetch the owner (User collection)
-        const ownerDocRef = doc(db, USERS_COLLECTION, householdId);
-        const ownerDocSnap = await getDoc(ownerDocRef);
+        // Owner doc and linked members/cooks are independent reads — fetch them
+        // in one parallel round trip.
+        const linkedQuery = (collectionName: string) =>
+            getDocs(query(collection(db, collectionName), where('linkedUserId', '==', householdId)));
+        const [ownerDocSnap, memberSnap, cookSnap] = await Promise.all([
+            getDoc(doc(db, USERS_COLLECTION, householdId)),
+            linkedQuery(MEMBERS_COLLECTION),
+            linkedQuery(COOKS_COLLECTION),
+        ]);
 
+        // 1. The owner (User collection)
         if (ownerDocSnap.exists()) {
             const data = ownerDocSnap.data();
             members.push({
@@ -683,11 +690,9 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
             });
         }
 
-        // 2. Fetch linked members/cooks
-        const fetchLinkedAndMap = async (collectionName: string, role: string) => {
-            const q = query(collection(db, collectionName), where('linkedUserId', '==', householdId));
-            const querySnapshot = await getDocs(q);
-            querySnapshot.forEach((docSnap) => {
+        // 2. Linked members, then cooks
+        const addLinked = (snapshot: typeof memberSnap, role: string) => {
+            snapshot.forEach((docSnap) => {
                 const data = docSnap.data();
                 if (data.email) {
                     members.push({
@@ -700,11 +705,8 @@ export async function getAllHouseholdMembers(): Promise<{ uid: string; email: st
                 }
             });
         };
-
-        await Promise.all([
-            fetchLinkedAndMap(MEMBERS_COLLECTION, 'member'),
-            fetchLinkedAndMap(COOKS_COLLECTION, 'cook')
-        ]);
+        addLinked(memberSnap, 'member');
+        addLinked(cookSnap, 'cook');
 
         console.log(`[Prod Debug] Fetched all household members for UID: ${currentUser.uid}, Computed Household ID: ${householdId}, Total Members Found: ${members.length}`);
 

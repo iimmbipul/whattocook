@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider } from '@/lib/firebase';
+import { auth, googleProvider } from '@/lib/firebaseAuth';
 import { loginWithGoogle, loginWithPhoneAndPin } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';

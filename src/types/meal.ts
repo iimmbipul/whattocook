@@ -68,6 +68,15 @@ export interface MealDocument {
   };
 }
 
+/** A household participant as returned by getAllHouseholdMembers. */
+export interface HouseholdMember {
+  uid: string;
+  email: string;
+  role: string;
+  label: string;
+  phoneNumber?: string;
+}
+
 export interface User {
   uid: string;
   email: string | null;
