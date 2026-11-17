@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
-import { loginWithGoogleEmail, loginWithPhoneAndPin } from '@/lib/auth';
+import { loginWithGoogle, loginWithPhoneAndPin } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
@@ -27,21 +27,23 @@ export default function LoginPage() {
     const { setUser } = useAuth();
     const { t } = useLocale();
 
-    const finishGoogleLogin = async (
-        email: string,
-        displayName: string | null | undefined,
-        photoURL: string | null | undefined,
-    ) => {
-        const user = await loginWithGoogleEmail(email, displayName || undefined, photoURL || undefined);
+    // The server verifies the Google ID token and only trusts the identity in
+    // it — the client never tells the server who it is.
+    const finishGoogleLogin = async (idToken: string) => {
+        const result = await loginWithGoogle(idToken);
 
-        if (user) {
-            setUser(user);
+        if (result.status === 'ok') {
+            setUser(result.user);
             router.push('/');
-        } else {
-            localStorage.setItem('pendingRegistrationEmail', email);
-            localStorage.setItem('pendingRegistrationName', displayName || '');
-            localStorage.setItem('pendingRegistrationPhoto', photoURL || '');
+        } else if (result.status === 'needs_onboarding') {
+            // Display only; onboarding reads the verified email from a signed cookie.
+            localStorage.setItem('pendingRegistrationEmail', result.email);
+            localStorage.setItem('pendingRegistrationName', result.displayName || '');
+            localStorage.setItem('pendingRegistrationPhoto', result.photoURL || '');
             router.push('/onboarding');
+        } else {
+            setError(result.error);
+            setLoading(false);
         }
     };
 
@@ -53,6 +55,8 @@ export default function LoginPage() {
         const handler = async (event: Event) => {
             const detail = (event as CustomEvent).detail as {
                 ok: boolean;
+                /** Google (or Firebase) ID token from the native sign-in — required. */
+                idToken?: string;
                 email?: string;
                 displayName?: string | null;
                 photoURL?: string | null;
@@ -68,14 +72,15 @@ export default function LoginPage() {
                 return;
             }
 
-            if (!detail.email) {
-                setError(t('login.googleNoEmail'));
+            if (!detail.idToken) {
+                // Older app builds only sent the profile, which the server can't verify.
+                setError('Please update the app to sign in with Google.');
                 setLoading(false);
                 return;
             }
 
             try {
-                await finishGoogleLogin(detail.email, detail.displayName, detail.photoURL);
+                await finishGoogleLogin(detail.idToken);
             } catch {
                 setError(t('login.googleError'));
                 setLoading(false);
@@ -104,17 +109,14 @@ export default function LoginPage() {
 
         try {
             const result = await signInWithPopup(auth, googleProvider);
-            const email = result.user.email;
-            const displayName = result.user.displayName;
-            const photoURL = result.user.photoURL;
 
-            if (!email) {
+            if (!result.user.email) {
                 setError(t('login.googleNoEmail'));
                 setLoading(false);
                 return;
             }
 
-            await finishGoogleLogin(email, displayName, photoURL);
+            await finishGoogleLogin(await result.user.getIdToken());
         } catch (err: unknown) {
             const firebaseErr = err as { code?: string };
             if (firebaseErr?.code !== 'auth/popup-closed-by-user' && firebaseErr?.code !== 'auth/cancelled-popup-request') {

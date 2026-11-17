@@ -1,10 +1,28 @@
 'use server';
 
 import { db } from './firebase';
-import { collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, Timestamp, getDocs, writeBatch, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, getDocs, writeBatch } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
 import { createNotification } from './notifications';
 import { syncMealCalendarAsync } from './calendarSync';
+import { canEditMeal } from './permissions';
+import { getHouseholdMemberIds, resetHouseholdResponsibilities as resetResponsibilitiesFor } from './server/household';
+import { getSessionUser } from './server/currentUser';
+import {
+    authorizeAppAdmin,
+    authorizeHousehold,
+    isFullDateId,
+    isHouseholdParticipant,
+    isValidMealId,
+} from './server/guards';
+
+/**
+ * Every export below is a server action, i.e. a public endpoint. Each one
+ * resolves the household (and acting user) from the verified session and
+ * rejects a `householdId` / `userId` argument that doesn't match it; the
+ * arguments are kept for backward compatibility. Notification `actor`s are
+ * likewise rebuilt from the session — a passed actor only signals "notify".
+ */
 
 export type NotificationActor = { uid: string; name: string };
 
@@ -14,27 +32,31 @@ export type NotificationActor = { uid: string; name: string };
  */
 const TEMPLATES_COLLECTION = 'menu_templates';
 
-const USERS_COLLECTION = 'users';
-const MEMBERS_COLLECTION = 'members';
-const COOKS_COLLECTION = 'cooks';
+type MealType = 'breakfast' | 'lunch' | 'dinner';
+const MEAL_TYPES: readonly MealType[] = ['breakfast', 'lunch', 'dinner'];
+const isMealType = (v: unknown): v is MealType => MEAL_TYPES.includes(v as MealType);
 
-/**
- * Return household participants eligible to receive cooking responsibility:
- * owner + members. Cooks are excluded — they're hired help, not part of the
- * rotation the household divides duties across.
- */
-export async function getHouseholdMemberIds(householdId: string): Promise<string[]> {
-    const ids: string[] = [];
+/** Only the meal contents may be changed through updateMeal. */
+function pickMealUpdates(updates: unknown): Partial<MealDocument> | null {
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return null;
+    const src = updates as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of MEAL_TYPES) {
+        if (src[key] === undefined) continue;
+        const item = src[key];
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+        out[key] = item;
+    }
+    if (src.total_calories !== undefined) {
+        if (typeof src.total_calories !== 'number' || !Number.isFinite(src.total_calories)) return null;
+        out.total_calories = src.total_calories;
+    }
+    return Object.keys(out).length > 0 ? (out as Partial<MealDocument>) : null;
+}
 
-    const ownerSnap = await getDoc(doc(db, USERS_COLLECTION, householdId));
-    if (ownerSnap.exists()) ids.push(householdId);
-
-    const membersSnap = await getDocs(
-        query(collection(db, MEMBERS_COLLECTION), where('linkedUserId', '==', householdId))
-    );
-    membersSnap.forEach(d => ids.push(d.id));
-
-    return ids;
+/** Display names that end up in notification payloads. */
+function cleanName(name: unknown): string {
+    return typeof name === 'string' ? name.slice(0, 120) : '';
 }
 
 /**
@@ -123,8 +145,12 @@ async function findDocInCollection(collectionName: string, dayId: string): Promi
  * Get a meal document by date (YYYY-MM-DD) for a specific household.
  * Tries the household collection specific date first, then the household generic day, then template.
  */
-export async function getMealByDate(date: string, householdId: string): Promise<MealDocument | null> {
+export async function getMealByDate(date: string, householdId?: string): Promise<MealDocument | null> {
     try {
+        const access = await authorizeHousehold('getMealByDate', householdId);
+        if (!access || !isValidMealId(date)) return null;
+        householdId = access.householdId;
+
         const hhCollection = getHouseholdCollection(householdId);
 
         // 1. Try specific date in household (e.g. 2026-03-17)
@@ -148,7 +174,7 @@ export async function getMealByDate(date: string, householdId: string): Promise<
 /**
  * Get today's meal for a household
  */
-export async function getTodayMeal(householdId: string): Promise<MealDocument | null> {
+export async function getTodayMeal(householdId?: string): Promise<MealDocument | null> {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     return getMealByDate(today, householdId);
 }
@@ -156,7 +182,7 @@ export async function getTodayMeal(householdId: string): Promise<MealDocument | 
 /**
  * Get tomorrow's meal for a household
  */
-export async function getTomorrowMeal(householdId: string): Promise<MealDocument | null> {
+export async function getTomorrowMeal(householdId?: string): Promise<MealDocument | null> {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
@@ -231,11 +257,25 @@ async function ensureHouseholdDoc(docId: string, householdId: string): Promise<b
 export async function updateMeal(
     mealId: string,
     updates: Partial<MealDocument>,
-    householdId: string,
+    householdId?: string,
     applyToAllMonths: boolean = false,
     actor?: NotificationActor
 ): Promise<boolean> {
     try {
+        // Cooks are view-only; past dates are locked (same rule as the UI).
+        const access = await authorizeHousehold('updateMeal', householdId, ['user', 'member']);
+        if (!access || !isValidMealId(mealId)) return false;
+        if (isFullDateId(mealId) && !canEditMeal(access.user.role, mealId)) {
+            console.warn(`[authz] updateMeal: rejected — ${mealId} is in the past`);
+            return false;
+        }
+        const allowedUpdates = pickMealUpdates(updates);
+        if (!allowedUpdates) return false;
+        updates = allowedUpdates;
+        householdId = access.householdId;
+        actor = actor ? access.actor : undefined;
+        applyToAllMonths = applyToAllMonths === true;
+
         const isFullDate = /^\d{4}-\d{2}-\d{2}$/.test(mealId);
         const docId = (applyToAllMonths && isFullDate) ? getDayId(mealId) : mealId;
 
@@ -305,10 +345,22 @@ export async function toggleMealAttendance(
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
     isSkipping: boolean,
-    householdId: string,
+    householdId?: string,
     actor?: NotificationActor
 ): Promise<boolean> {
     try {
+        // You can only mark your own attendance.
+        const access = await authorizeHousehold('toggleMealAttendance', householdId, ['user', 'member']);
+        if (!access || !isFullDateId(mealId) || !isMealType(mealType)) return false;
+        if (userId && userId !== access.user.uid) {
+            console.warn(`[authz] toggleMealAttendance: rejected — ${access.user.uid} tried to change ${userId}`);
+            return false;
+        }
+        userId = access.user.uid;
+        householdId = access.householdId;
+        actor = actor ? access.actor : undefined;
+        isSkipping = isSkipping === true;
+
         const docId = mealId; // Always specific date
         await ensureHouseholdDoc(docId, householdId);
 
@@ -400,10 +452,21 @@ export async function addGuest(
     mealId: string,
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
-    householdId: string,
+    householdId?: string,
     actor?: NotificationActor
 ): Promise<boolean> {
     try {
+        // Guests are recorded under the signed-in member only.
+        const access = await authorizeHousehold('addGuest', householdId, ['user', 'member']);
+        if (!access || !isFullDateId(mealId) || !isMealType(mealType)) return false;
+        if (userId && userId !== access.user.uid) {
+            console.warn(`[authz] addGuest: rejected — ${access.user.uid} tried to add under ${userId}`);
+            return false;
+        }
+        userId = access.user.uid;
+        householdId = access.householdId;
+        actor = actor ? access.actor : undefined;
+
         const docId = mealId;
         await ensureHouseholdDoc(docId, householdId);
 
@@ -451,10 +514,20 @@ export async function removeGuest(
     mealId: string,
     mealType: 'breakfast' | 'lunch' | 'dinner',
     userId: string,
-    householdId: string,
+    householdId?: string,
     actor?: NotificationActor
 ): Promise<boolean> {
     try {
+        const access = await authorizeHousehold('removeGuest', householdId, ['user', 'member']);
+        if (!access || !isFullDateId(mealId) || !isMealType(mealType)) return false;
+        if (userId && userId !== access.user.uid) {
+            console.warn(`[authz] removeGuest: rejected — ${access.user.uid} tried to remove under ${userId}`);
+            return false;
+        }
+        userId = access.user.uid;
+        householdId = access.householdId;
+        actor = actor ? access.actor : undefined;
+
         const docId = mealId;
         await ensureHouseholdDoc(docId, householdId);
 
@@ -501,11 +574,22 @@ export async function updateMealResponsibility(
     mealId: string,
     slot: 'breakfastLunchId' | 'dinnerId',
     userId: string | null,
-    householdId: string,
+    householdId?: string,
     actor?: NotificationActor,
     memberNames?: { fromName?: string; toName?: string }
 ): Promise<boolean> {
     try {
+        // The assignee (if any) must belong to the caller's household.
+        const access = await authorizeHousehold('updateMealResponsibility', householdId, ['user', 'member']);
+        if (!access || !isFullDateId(mealId) || (slot !== 'breakfastLunchId' && slot !== 'dinnerId')) return false;
+        if (userId && !(await isHouseholdParticipant(access.householdId, userId, { includeCooks: true }))) {
+            console.warn(`[authz] updateMealResponsibility: rejected — ${userId} is not in household ${access.householdId}`);
+            return false;
+        }
+        householdId = access.householdId;
+        actor = actor ? access.actor : undefined;
+        memberNames = { fromName: cleanName(memberNames?.fromName), toName: cleanName(memberNames?.toName) };
+
         const docId = mealId; // Always specific date
         await ensureHouseholdDoc(docId, householdId);
 
@@ -547,11 +631,32 @@ export async function updateMealResponsibility(
 export async function bulkUpdateMealResponsibility(
     dates: string[],
     updates: { breakfastLunchId?: string | null; dinnerId?: string | null },
-    householdId: string,
+    householdId?: string,
     actor?: NotificationActor,
     memberNames?: { breakfastLunchName?: string; dinnerName?: string }
 ): Promise<{ success: boolean; updated: number; error?: string }> {
     try {
+        // Admin page only (household owner); assignees must be in the household.
+        const access = await authorizeHousehold('bulkUpdateMealResponsibility', householdId, ['user']);
+        if (!access) return { success: false, updated: 0, error: 'Not allowed.' };
+        if (!Array.isArray(dates) || dates.length > 400 || !dates.every(isFullDateId)) {
+            return { success: false, updated: 0, error: 'Invalid dates.' };
+        }
+        const requested = updates && typeof updates === 'object' ? updates : {};
+        updates = {};
+        for (const slot of ['breakfastLunchId', 'dinnerId'] as const) {
+            const assignee = requested[slot];
+            if (assignee === undefined) continue;
+            if (assignee !== null && !(await isHouseholdParticipant(access.householdId, assignee, { includeCooks: true }))) {
+                console.warn(`[authz] bulkUpdateMealResponsibility: rejected — ${assignee} is not in household ${access.householdId}`);
+                return { success: false, updated: 0, error: 'That person is not in your household.' };
+            }
+            updates[slot] = assignee;
+        }
+        householdId = access.householdId;
+        actor = actor ? access.actor : undefined;
+        memberNames = { breakfastLunchName: cleanName(memberNames?.breakfastLunchName), dinnerName: cleanName(memberNames?.dinnerName) };
+
         if (dates.length === 0) return { success: true, updated: 0 };
 
         const hhCollection = getHouseholdCollection(householdId);
@@ -622,183 +727,16 @@ export async function bulkUpdateMealResponsibility(
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Reset & evenly distribute cooking responsibility across all household participants.
- * Iterates every meal doc in the household collection and assigns
- * Breakfast+Lunch and Dinner slots in a round-robin so counts stay balanced.
- */
-export async function redistributeResponsibilitiesEqually(
-    householdId: string,
-    memberIds: string[]
-): Promise<{ success: boolean; updated: number; error?: string }> {
-    try {
-        if (!memberIds.length) return { success: true, updated: 0 };
-
-        const hhCollection = getHouseholdCollection(householdId);
-        let snap = await getDocs(collection(db, hhCollection));
-
-        // Legacy households have no meal docs until the first edit — seed the
-        // subcollection from the master template so we have something to assign.
-        if (snap.empty) {
-            const templateSnap = await getDocs(collection(db, TEMPLATES_COLLECTION));
-            if (!templateSnap.empty) {
-                const seedBatch = writeBatch(db);
-                templateSnap.forEach((tDoc) => {
-                    const data = tDoc.data();
-                    const { id: _id, created_at: _c, updated_at: _u, ...rest } = data as any;
-                    const targetRef = doc(db, hhCollection, tDoc.id);
-                    seedBatch.set(targetRef, {
-                        ...rest,
-                        created_at: serverTimestamp(),
-                        updated_at: serverTimestamp(),
-                    });
-                });
-                await seedBatch.commit();
-                snap = await getDocs(collection(db, hhCollection));
-            }
-        }
-
-        if (snap.empty) {
-            return { success: false, updated: 0, error: 'No meal days found in household or template collection.' };
-        }
-
-        // Sort deterministically so re-runs produce the same schedule
-        const docs = snap.docs.slice().sort((a, b) => a.id.localeCompare(b.id));
-
-        // Weight each slot by the number of future meals it would produce,
-        // so the same rule used on the profile page (My Plates counting) gets
-        // balanced — template docs count for current + next month, past dates
-        // count for 0. Then greedily assign each slot (heaviest first) to the
-        // currently-least-loaded member.
-        const today = new Date();
-        const currentYear = today.getFullYear();
-        const currentMonth = today.getMonth() + 1;
-        const todayStr = today.toISOString().split('T')[0];
-
-        const futureOccurrences = (id: string): number => {
-            if (/^\d{4}-\d{2}-\d{2}$/.test(id)) return id >= todayStr ? 1 : 0;
-            const dayNum = parseInt(id, 10);
-            if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) return 0;
-            const thisMonth = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
-            let nextY = currentYear, nextM = currentMonth + 1;
-            if (nextM > 12) { nextM = 1; nextY++; }
-            const nextMonth = `${nextY}-${nextM.toString().padStart(2, '0')}-${dayNum.toString().padStart(2, '0')}`;
-            return (thisMonth >= todayStr ? 1 : 0) + (nextMonth >= todayStr ? 1 : 0);
-        };
-
-        type Slot = { docIdx: number; kind: 'bl' | 'd'; weight: number };
-        const slots: Slot[] = [];
-        docs.forEach((docSnap, idx) => {
-            const data = docSnap.data() as MealDocument;
-            const occ = futureOccurrences(docSnap.id);
-            const blMeals = (data.breakfast ? 1 : 0) + (data.lunch ? 1 : 0);
-            const dMeals = data.dinner ? 1 : 0;
-            slots.push({ docIdx: idx, kind: 'bl', weight: occ * blMeals });
-            slots.push({ docIdx: idx, kind: 'd', weight: occ * dMeals });
-        });
-
-        // Heaviest slots first; tie-break by docIdx + kind for determinism
-        slots.sort((a, b) => b.weight - a.weight || a.docIdx - b.docIdx || (a.kind < b.kind ? -1 : 1));
-
-        const load: Record<string, number> = {};
-        memberIds.forEach(id => { load[id] = 0; });
-
-        // Rotating tiebreak so members with equal load don't all get pinned
-        // to the first uid in memberIds order.
-        let rotation = 0;
-
-        const assignments: Record<number, { bl?: string; d?: string }> = {};
-        for (const slot of slots) {
-            const ordered = memberIds
-                .slice(rotation)
-                .concat(memberIds.slice(0, rotation));
-            const pick = ordered.reduce((best, uid) =>
-                load[uid] < load[best] ? uid : best
-            , ordered[0]);
-            rotation = (rotation + 1) % memberIds.length;
-
-            load[pick] += slot.weight;
-            const cur = assignments[slot.docIdx] || {};
-            if (slot.kind === 'bl') cur.bl = pick; else cur.d = pick;
-            assignments[slot.docIdx] = cur;
-        }
-
-        const batch = writeBatch(db);
-        docs.forEach((docSnap, idx) => {
-            const a = assignments[idx] || {};
-            batch.set(docSnap.ref, {
-                responsibility: {
-                    breakfastLunchId: a.bl ?? null,
-                    dinnerId: a.d ?? null,
-                }
-            }, { merge: true });
-        });
-
-        await batch.commit();
-
-        // Sync only the real-date docs; template day docs (e.g. "01") are
-        // filtered out inside syncMealCalendar.
-        for (const docSnap of docs) {
-            if (/^\d{4}-\d{2}-\d{2}$/.test(docSnap.id)) {
-                await syncMealCalendarAsync(householdId, docSnap.id);
-            }
-        }
-
-        return { success: true, updated: docs.length };
-    } catch (error: any) {
-        console.error('Error redistributing responsibilities:', error);
-        return { success: false, updated: 0, error: error.message };
-    }
-}
-
-/**
- * Convenience wrapper: fetch members and redistribute in one call.
+ * Reset & evenly distribute cooking responsibility across the household
+ * (owner only, own household). The implementation lives in
+ * ./server/household so trusted server code can call it without a session.
  */
 export async function resetHouseholdResponsibilities(
-    householdId: string
+    householdId?: string
 ): Promise<{ success: boolean; updated: number; error?: string }> {
-    const memberIds = await getHouseholdMemberIds(householdId);
-    return redistributeResponsibilitiesEqually(householdId, memberIds);
-}
-
-/**
- * Null out any responsibility assignments pointing at a departing member,
- * so counts stay accurate and skipped-slot reassignment can pick them up.
- */
-export async function clearMemberAssignments(
-    householdId: string,
-    memberUid: string
-): Promise<void> {
-    const hhCollection = getHouseholdCollection(householdId);
-    const snap = await getDocs(collection(db, hhCollection));
-    const batch = writeBatch(db);
-    let touched = 0;
-
-    snap.forEach(d => {
-        const data = d.data() as MealDocument;
-        const update: Record<string, unknown> = {};
-        if (data.responsibility?.breakfastLunchId === memberUid) {
-            update['responsibility.breakfastLunchId'] = null;
-        }
-        if (data.responsibility?.dinnerId === memberUid) {
-            update['responsibility.dinnerId'] = null;
-        }
-        if (Object.keys(update).length > 0) {
-            batch.update(doc(db, hhCollection, d.id), update);
-            touched++;
-        }
-    });
-
-    if (touched > 0) {
-        await batch.commit();
-        // Rebuild calendar events for affected real-date docs so the
-        // departing member's events get deleted (and any successor picked
-        // up by reassignment logic gets a new event).
-        snap.forEach(d => {
-            if (/^\d{4}-\d{2}-\d{2}$/.test(d.id)) {
-                syncMealCalendarAsync(householdId, d.id).catch(() => {});
-            }
-        });
-    }
+    const access = await authorizeHousehold('resetHouseholdResponsibilities', householdId, ['user']);
+    if (!access) return { success: false, updated: 0, error: 'Only the household owner can do this.' };
+    return resetResponsibilitiesFor(access.householdId);
 }
 
 /**
@@ -810,8 +748,12 @@ export async function clearMemberAssignments(
  *   - only counts today and future dates
  */
 export async function getHouseholdAssignmentCounts(
-    householdId: string
+    householdId?: string
 ): Promise<Record<string, number>> {
+    const access = await authorizeHousehold('getHouseholdAssignmentCounts', householdId);
+    if (!access) return {};
+    householdId = access.householdId;
+
     const counts: Record<string, number> = {};
     const bump = (uid: string, n: number) => {
         counts[uid] = (counts[uid] ?? 0) + n;
@@ -951,8 +893,12 @@ async function reassignSkippedSlot(
  * Days that exist in the household collection use that data;
  * Days only in the template use the template data.
  */
-export async function getAllMeals(householdId: string): Promise<MealDocument[]> {
+export async function getAllMeals(householdId?: string): Promise<MealDocument[]> {
     try {
+        const access = await authorizeHousehold('getAllMeals', householdId);
+        if (!access) return [];
+        householdId = access.householdId;
+
         // 1. Load all templates
         const templatesRef = collection(db, TEMPLATES_COLLECTION);
         const templateSnapshot = await getDocs(templatesRef);
@@ -984,6 +930,8 @@ export async function getAllMeals(householdId: string): Promise<MealDocument[]> 
  */
 export async function getAllTemplateMeals(): Promise<MealDocument[]> {
     try {
+        if (!(await getSessionUser())) return [];
+
         const templatesRef = collection(db, TEMPLATES_COLLECTION);
         const querySnapshot = await getDocs(templatesRef);
 
@@ -1010,6 +958,11 @@ export async function getAllTemplateMeals(): Promise<MealDocument[]> {
  */
 export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolean; updated: number; error?: string }> {
     try {
+        // Rewrites the template shared by every household: app admins only.
+        if (!(await authorizeAppAdmin('updateMealDatesToCurrentMonth'))) {
+            return { success: false, updated: 0, error: 'Only app admins (ADMIN_EMAILS) can change the shared templates.' };
+        }
+
         console.log('Starting template date update and ID migration...');
         const meals = await getAllTemplateMeals();
         console.log(`Found ${meals.length} template meals to update`);
@@ -1090,6 +1043,10 @@ export async function updateMealDatesToCurrentMonth(): Promise<{ success: boolea
  */
 export async function copyDailyMenuToTemplates(): Promise<{ success: boolean; copied: number; error?: string }> {
     try {
+        if (!(await authorizeAppAdmin('copyDailyMenuToTemplates'))) {
+            return { success: false, copied: 0, error: 'Only app admins (ADMIN_EMAILS) can change the shared templates.' };
+        }
+
         const SOURCE = 'dailymenu';
 
         const sourceRef = collection(db, SOURCE);
@@ -1127,11 +1084,20 @@ export async function copyDailyMenuToTemplates(): Promise<{ success: boolean; co
 /**
  * Get meals for a specific user (Assigned to Cook OR Attending)
  */
-export async function getUserMeals(userId: string, householdId: string): Promise<{
+export async function getUserMeals(userId: string, householdId?: string): Promise<{
     assigned: { date: string; mealType: string; meal: MealItem }[];
     attending: { date: string; mealType: string; meal: MealItem }[];
 }> {
     try {
+        // Your own plates, or another participant of your household.
+        const access = await authorizeHousehold('getUserMeals', householdId);
+        if (!access) return { assigned: [], attending: [] };
+        if (userId !== access.user.uid && !(await isHouseholdParticipant(access.householdId, userId, { includeCooks: true }))) {
+            console.warn(`[authz] getUserMeals: rejected — ${userId} is not in household ${access.householdId}`);
+            return { assigned: [], attending: [] };
+        }
+        householdId = access.householdId;
+
         const allMeals = await getAllMeals(householdId);
         const assigned: { date: string; mealType: string; meal: MealItem }[] = [];
         const attending: { date: string; mealType: string; meal: MealItem }[] = [];

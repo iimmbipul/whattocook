@@ -1,4 +1,4 @@
-'use server';
+import 'server-only';
 
 /**
  * Thin server-side wrapper around Google's OAuth2 + Calendar REST APIs.

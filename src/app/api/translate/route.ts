@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
+import { getSessionUser } from '@/lib/server/currentUser';
 
 const LANGUAGE_NAMES: Record<string, string> = {
     en: 'English',
@@ -78,6 +79,11 @@ function parseRetryAfterMs(err: any): number | null {
 }
 
 export async function POST(req: NextRequest) {
+    // Spends the Groq quota — signed-in users only.
+    if (!(await getSessionUser())) {
+        return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
     if (!process.env.GROQ_API_KEY) {
         return NextResponse.json(
             { error: 'Translation not configured. Add GROQ_API_KEY to .env.local' },

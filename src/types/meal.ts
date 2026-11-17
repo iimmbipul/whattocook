@@ -81,6 +81,12 @@ export interface User {
   houseCode?: string;
   housePin?: string;
   dietCategory?: string;
+  /**
+   * Server-signed session token, returned by login/refresh so the client can
+   * keep it (localStorage) and restore the httpOnly cookie on iOS PWAs. The
+   * server only accepts it through restoreSession(), which verifies it.
+   */
+  sessionToken?: string;
 }
 
 export type NotificationType =

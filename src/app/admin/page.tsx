@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createUser, getAllHouseholdMembers } from '@/lib/auth';
 import { updateMealDatesToCurrentMonth } from '@/lib/firestore';
 import AdminJsonEditor from '@/components/AdminJsonEditor';
+import { getAdminCapabilities, migrateStoredCredentials } from '@/lib/adminData';
 import { UserRole } from '@/types/meal';
 import BulkResponsibilityManager from '@/components/BulkResponsibilityManager';
 import MultiDatePicker from '@/components/MultiDatePicker';
@@ -35,6 +36,11 @@ export default function AdminPage() {
     const [members, setMembers] = useState<{ uid: string; email: string; role: string; label: string }[]>([]);
     const [loadingMembers, setLoadingMembers] = useState(true);
 
+    // Shared-template tools and the raw DB editor are for app admins only
+    // (ADMIN_EMAILS); the server enforces this, the flag just hides the UI.
+    const [appAdmin, setAppAdmin] = useState(false);
+    const [credentialMigration, setCredentialMigration] = useState<{ busy: boolean; message: string }>({ busy: false, message: '' });
+
     // Guard: only 'user' (owner) role can access admin
     useEffect(() => {
         if (authLoading) return; // wait for auth to resolve
@@ -47,6 +53,7 @@ export default function AdminPage() {
             setMembers(list);
             setLoadingMembers(false);
         });
+        getAdminCapabilities().then(c => setAppAdmin(c.appAdmin)).catch(() => setAppAdmin(false));
     }, [user, authLoading, router]);
 
     const handleDateToggle = (date: Date) => {
@@ -118,6 +125,34 @@ export default function AdminPage() {
         }
     };
 
+    const handleMigrateCredentials = async () => {
+        setCredentialMigration({ busy: true, message: '' });
+        try {
+            const preview = await migrateStoredCredentials(true);
+            if (!preview.ok) {
+                setCredentialMigration({ busy: false, message: `❌ ${preview.error ?? 'Migration failed'}` });
+                return;
+            }
+            if (preview.migrated === 0) {
+                setCredentialMigration({ busy: false, message: `✅ Nothing to migrate (${preview.alreadyHashed} already hashed, ${preview.skipped} skipped).` });
+                return;
+            }
+            if (!confirm(`Hash ${preview.migrated} stored password/PIN record(s) and delete their plaintext? This cannot be undone.`)) {
+                setCredentialMigration({ busy: false, message: '' });
+                return;
+            }
+            const result = await migrateStoredCredentials(false);
+            setCredentialMigration({
+                busy: false,
+                message: result.ok
+                    ? `✅ Hashed ${result.migrated} record(s); ${result.alreadyHashed} were already hashed; ${result.skipped} skipped (no usable value).`
+                    : `❌ ${result.error ?? 'Migration failed'}`,
+            });
+        } catch (err) {
+            setCredentialMigration({ busy: false, message: `❌ ${err instanceof Error ? err.message : 'Migration failed'}` });
+        }
+    };
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50 py-12 px-4">
             <div className="container mx-auto max-w-2xl space-y-8">
@@ -154,7 +189,7 @@ export default function AdminPage() {
                                 required
                             >
                                 <option value="member">{t('admin.roleMember')}</option>
-                                <option value="user">{t('admin.roleOwner')}</option>
+                                {appAdmin && <option value="user">{t('admin.roleOwner')}</option>}
                                 <option value="cook">{t('admin.roleCook')}</option>
                             </select>
                         </div>
@@ -256,7 +291,8 @@ export default function AdminPage() {
                     </form>
                 </div>
 
-                {/* Meal Date Management Section */}
+                {/* Meal Date Management Section (shared templates: app admins only) */}
+                {appAdmin && (
                 <div className="bg-white rounded-2xl shadow-xl p-8">
                     <div className="mb-6">
                         <h2 className="text-2xl font-bold text-gray-800 mb-2">{t('admin.mealDateTitle')}</h2>
@@ -328,7 +364,27 @@ export default function AdminPage() {
                     >
                         {mealUpdateLoading ? 'Copying...' : 'Copy Daily Menu to Templates'}
                     </button>
+
+                    <hr className="my-6 border-gray-200" />
+
+                    <h3 className="font-bold text-gray-800 mb-2">Security: hash stored passwords &amp; PINs</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                        One-time migration: replaces any plaintext <code>password</code> / cook <code>pin</code> fields with salted hashes and deletes the plaintext. Accounts are also migrated automatically when they next sign in.
+                    </p>
+                    {credentialMigration.message && (
+                        <div className="mb-4 bg-gray-50 border border-gray-200 text-gray-800 px-4 py-3 rounded-lg text-sm">
+                            {credentialMigration.message}
+                        </div>
+                    )}
+                    <button
+                        onClick={handleMigrateCredentials}
+                        disabled={credentialMigration.busy}
+                        className="w-full bg-gradient-to-r from-slate-600 to-slate-800 hover:from-slate-700 hover:to-slate-900 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 disabled:opacity-50"
+                    >
+                        {credentialMigration.busy ? 'Working...' : 'Hash stored passwords & PINs'}
+                    </button>
                 </div>
+                )}
 
                 {/* Responsibility Assignment Section */}
                 <div className="bg-white rounded-2xl shadow-xl p-8">
@@ -349,7 +405,13 @@ export default function AdminPage() {
                     />
                 </div>
 
-                <AdminJsonEditor />
+                {appAdmin ? (
+                    <AdminJsonEditor />
+                ) : (
+                    <p className="text-xs text-gray-500 text-center">
+                        Shared menu templates and the database editor are limited to app admins.
+                    </p>
+                )}
 
                 {/* Navigation */}
                 <div>
