@@ -1,6 +1,6 @@
 /**
  * Client-side translation utility.
- * Calls our internal /api/translate route (which uses Groq server-side).
+ * Calls our internal /api/translate route (Gemini server-side, Groq fallback).
  *
  * Features:
  * - In-memory cache to avoid duplicate API calls within a session
