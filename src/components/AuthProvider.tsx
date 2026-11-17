@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { refreshSession, getCurrentUser, restoreCookieFromClient } from '@/lib/auth';
+import { refreshSession, restoreSession } from '@/lib/auth';
 import { User } from '@/types/meal';
 
 interface AuthContextType {
@@ -27,61 +27,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         // Check for existing user session on mount
         const checkAuth = async () => {
-            // 1. Try server-side cookie and refresh it concurrently if possible
-            const refreshedUser = await refreshSession();
+            try {
+                // 1. The httpOnly session cookie — verified and rolled forward by the server.
+                const refreshedUser = await refreshSession();
+                if (refreshedUser) {
+                    setUser(refreshedUser);
+                    localStorage.setItem('meal_planner_user', JSON.stringify(refreshedUser));
+                    return;
+                }
 
-            if (refreshedUser) {
-                setUser(refreshedUser);
-                // Sync to local storage
-                localStorage.setItem('meal_planner_user', JSON.stringify(refreshedUser));
-            } else {
-                // 2. Fallback to localStorage (if cookie is lost/expired but client session intended)
-                // This acts as the "refresh token" layer specifically for iOS/PWAs that aggressively clear cookies.
-                const stored = localStorage.getItem('meal_planner_user');
-                if (stored) {
-                    try {
-                        let parsedUser = JSON.parse(stored) as User;
+                // 2. iOS PWAs can drop cookies while keeping localStorage. The stored
+                //    copy carries the server-signed session token; only that token is
+                //    sent back, and the server verifies it (and re-checks the account)
+                //    before restoring the cookie. Unsigned data from older versions is
+                //    ignored, so those users simply sign in again once.
+                let token: string | undefined;
+                try {
+                    const stored = localStorage.getItem('meal_planner_user');
+                    token = stored ? (JSON.parse(stored) as Partial<User>).sessionToken : undefined;
+                } catch {
+                    token = undefined;
+                }
 
-                        // If no cookie and localStorage user is missing linkedUserId, force re-login
-                        // (prevents zombie state from extremely old login structures)
-                        if ((parsedUser.role === 'member' || parsedUser.role === 'cook') && !parsedUser.linkedUserId) {
-                            localStorage.removeItem('meal_planner_user');
-                            setUser(null);
-                        } else {
-                            if (!parsedUser.householdId) {
-                                parsedUser.householdId = parsedUser.role === 'user' ? parsedUser.uid : (parsedUser.linkedUserId || parsedUser.uid);
-                            }
-
-                            // Restore the secure server-side cookie so that Server Actions work again!
-                            const restored = await restoreCookieFromClient(parsedUser);
-
-                            if (restored) {
-                                // Double check against firestore to ensure user isn't disabled/deleted,
-                                // and get the absolute freshest data.
-                                const finalCheck = await refreshSession();
-                                if (finalCheck) {
-                                    parsedUser = finalCheck;
-                                    localStorage.setItem('meal_planner_user', JSON.stringify(parsedUser));
-                                } else {
-                                    // Invalid in DB
-                                    localStorage.removeItem('meal_planner_user');
-                                    setUser(null);
-                                    setLoading(false);
-                                    return;
-                                }
-                            }
-
-                            setUser(parsedUser);
-                        }
-                    } catch (e) {
-                        localStorage.removeItem('meal_planner_user');
-                        setUser(null);
-                    }
+                const restoredUser = token ? await restoreSession(token) : null;
+                if (restoredUser) {
+                    setUser(restoredUser);
+                    localStorage.setItem('meal_planner_user', JSON.stringify(restoredUser));
                 } else {
+                    localStorage.removeItem('meal_planner_user');
                     setUser(null);
                 }
+            } catch (err) {
+                // Network/server error: keep the stored token for the next attempt.
+                console.error('Session check failed', err);
+                setUser(null);
+            } finally {
+                setLoading(false);
             }
-            setLoading(false);
         };
 
         checkAuth();

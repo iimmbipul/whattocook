@@ -4,7 +4,7 @@ A production-ready Next.js application for managing daily meal plans with Fireba
 
 ## 🚀 Features
 
-- **Simple Firestore Authentication**: Email/password stored directly in Firestore (no Firebase Auth needed)
+- **Authentication**: Google sign-in (verified on the server) for owners and members, phone + PIN for cooks; signed session cookies (see [docs/SECURITY.md](docs/SECURITY.md))
 - **Role-Based Access Control**: 
   - **User (House Member)**: Can view and edit today & future meals
   - **Cook (Viewer)**: View-only access to all meals
@@ -45,6 +45,11 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
 NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
 NEXT_PUBLIC_HOUSE_OWNER_PHONE=+1234567890
+
+# Server-only
+SESSION_SECRET=at_least_32_random_characters   # signs session cookies (required in production)
+ADMIN_EMAILS=you@example.com                     # Google accounts allowed to use the shared-template/admin tools
+CREDENTIAL_PEPPER=optional_random_value          # optional; set once, never change
 ```
 
 ### 3. Set Up Firestore
@@ -58,7 +63,7 @@ NEXT_PUBLIC_HOUSE_OWNER_PHONE=+1234567890
   ```typescript
   {
     email: string
-    password: string  // Plain text (for demo purposes)
+    passwordHash?: string  // scrypt hash; set by the app, never stored in plaintext
     role: "user" | "cook"
     phoneNumber: string
     createdAt: timestamp
@@ -90,15 +95,12 @@ Visit [http://localhost:3000](http://localhost:3000)
 ## 🔐 Authentication System
 
 **How It Works:**
-1. User credentials stored in Firestore `users` collection
-2. Login queries Firestore for matching email/password
-3. Session stored in browser localStorage
-4. No Firebase Authentication SDK required
+1. Owners and members sign in with Google; the server verifies the Firebase ID token
+2. Cooks sign in with phone number + PIN (stored as a salted scrypt hash)
+3. The session is an HMAC-signed, httpOnly cookie; server actions take the household from it
+4. iOS PWAs keep a copy of the signed token in localStorage to restore the cookie
 
-**Security Note:**
-- Passwords stored in plain text (suitable for internal/demo use)
-- For production, implement proper password hashing
-- Consider adding Firestore security rules
+**Security:** see [docs/SECURITY.md](docs/SECURITY.md) — including the remaining step of moving the server to `firebase-admin` and deploying `firestore.rules`.
 
 ## 📁 Project Structure
 
@@ -156,14 +158,13 @@ meal-planner/
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS
 - **Database**: Firebase Firestore
-- **Auth**: Custom (Firestore-based)
+- **Auth**: Google (Firebase Auth ID tokens verified server-side) + cook PINs, signed session cookies
 
 ## 🚨 Important Notes
 
-- No Firebase Authentication required
-- Passwords stored unencrypted (demo only)
+- Passwords and PINs are stored as hashes; see [docs/SECURITY.md](docs/SECURITY.md)
 - Firestore schema used exactly as provided
-- Session persists via localStorage
+- Sessions are signed cookies (with a signed localStorage copy for iOS PWAs)
 
 ## 📝 License
 

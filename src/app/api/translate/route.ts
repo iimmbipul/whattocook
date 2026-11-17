@@ -7,6 +7,7 @@ import {
     hasAnyAiProvider,
     type ModelChoice,
 } from '@/lib/aiModels';
+import { getSessionUser } from '@/lib/server/currentUser';
 
 // Translation strategy:
 //   1. Gemini (gemini-3.5-flash-lite): structured output, up to
@@ -302,6 +303,11 @@ Example output for 2 items:
 // ---------------------------------------------------------------------------
 
 export async function POST(req: NextRequest) {
+    // Spends the AI provider quota — signed-in users only.
+    if (!(await getSessionUser())) {
+        return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
     if (!hasAnyAiProvider()) {
         return NextResponse.json(
             {

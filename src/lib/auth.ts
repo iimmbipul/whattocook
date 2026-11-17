@@ -1,155 +1,193 @@
 'use server';
 
-import { db } from './firebase';
-import { collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc, writeBatch, serverTimestamp, setDoc, deleteDoc } from 'firebase/firestore';
+import {
+    db, collection, query, where, getDocs, addDoc, getCountFromServer, doc, getDoc, writeBatch, serverTimestamp, setDoc, deleteDoc, updateDoc, deleteField, increment, Timestamp, type DocumentData, type QueryDocumentSnapshot,
+} from './server/db';
 import { User, UserRole } from '@/types/meal';
-import { cookies } from 'next/headers';
 import { generate30DayPlan, MonthlyPlanDay } from './ai';
-import { resetHouseholdResponsibilities, clearMemberAssignments } from './firestore';
+import { resetHouseholdResponsibilities, clearMemberAssignments } from './server/household';
+import { verifyGoogleIdentityToken } from './server/idToken';
+import { dummyVerify, hashSecret, verifySecret } from './server/password';
+import {
+    clearPendingSignup,
+    clearSessionCookies,
+    readPendingSignup,
+    readSessionCookieWithToken,
+    verifySessionToken,
+    writePendingSignup,
+    writeSessionCookie,
+    writeSessionTokenCookie,
+    type AuthMethod,
+    type VerifiedSession,
+} from './server/session';
+import {
+    COOKS_COLLECTION,
+    MEMBERS_COLLECTION,
+    USERS_COLLECTION,
+    buildUser,
+    collectionForRole,
+    ensureHouseCredentials,
+    getSessionUser,
+    householdIdFor,
+    loadAccount,
+    randomDigits,
+    randomLetters,
+} from './server/currentUser';
+import { authorizeHousehold, isAppAdmin, isSafeDocId } from './server/guards';
 
-const USERS_COLLECTION = 'users'; // Owners/Admins
-const MEMBERS_COLLECTION = 'members'; // Family members
-const COOKS_COLLECTION = 'cooks'; // Cooks
-const COOKIE_NAME = 'session_user';
+/** Diet categories offered in onboarding and on the profile page. */
+const DIET_CATEGORIES = ['Healthy', 'Vegan', 'Indian', 'Balanced', 'Protein-Heavy', 'Flexible'];
+
+/** Wrong PIN/password attempts before an account is locked for LOCKOUT_MS. */
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_MS = 15 * 60 * 1000;
 
 /**
- * Login via Google OAuth (email already verified by Firebase Auth client-side).
- * Looks up the user by email in Firestore without a password check.
+ * Derive the household ID for a user.
+ * Owners (role 'user') use their own uid; members/cooks use their linkedUserId.
  */
-export async function loginWithGoogleEmail(email: string, displayName?: string, photoURL?: string): Promise<User | null> {
+function getHouseholdId(role: UserRole, uid: string, linkedUserId?: string): string {
+    return householdIdFor(role, uid, linkedUserId);
+}
+
+function normalizeDietCategory(category?: string | null): string | null {
+    if (typeof category !== 'string') return null;
+    const wanted = category.trim().toLowerCase();
+    return DIET_CATEGORIES.find(c => c.toLowerCase() === wanted) ?? null;
+}
+
+type FoundAccount = { role: UserRole; snap: QueryDocumentSnapshot<DocumentData> };
+
+/** Find an account by email; owners take precedence over members, then cooks. */
+async function findAccountByEmail(email: string): Promise<FoundAccount | null> {
+    if (typeof email !== 'string' || !email || email.length > 320) return null;
+    const byEmail = (collectionName: string) =>
+        getDocs(query(collection(db, collectionName), where('email', '==', email)));
+    const [owners, members, cooks] = await Promise.all([
+        byEmail(USERS_COLLECTION),
+        byEmail(MEMBERS_COLLECTION),
+        byEmail(COOKS_COLLECTION),
+    ]);
+    if (!owners.empty) return { role: 'user', snap: owners.docs[0] };
+    if (!members.empty) return { role: 'member', snap: members.docs[0] };
+    if (!cooks.empty) return { role: 'cook', snap: cooks.docs[0] };
+    return null;
+}
+
+/** Issue a session for an existing account and return the user (with its session token). */
+async function startSession(role: UserRole, uid: string, data: DocumentData, amr: AuthMethod): Promise<User> {
+    await ensureHouseCredentials(role, uid, data);
+    const user = buildUser(role, uid, data);
+    const sessionToken = await writeSessionCookie(user, amr);
+    await clearPendingSignup();
+    return { ...user, sessionToken };
+}
+
+export type GoogleLoginResult =
+    | { status: 'ok'; user: User }
+    | { status: 'needs_onboarding'; email: string; displayName?: string; photoURL?: string }
+    | { status: 'error'; error: string };
+
+/**
+ * Login via Google. `idToken` is the Firebase ID token from signInWithPopup
+ * (or a Google ID token from the mobile app's native sign-in); it is verified
+ * on the server and the email inside it is the only identity trusted.
+ *
+ * Unknown emails get a short-lived signed "pending sign-up" cookie and are
+ * sent to onboarding, which reads the verified email from that cookie.
+ */
+export async function loginWithGoogle(idToken: string): Promise<GoogleLoginResult> {
     try {
-        let userDoc = await findUserInCollectionByEmail(USERS_COLLECTION, email);
-        let role: UserRole = 'user';
-
-        if (!userDoc) {
-            userDoc = await findUserInCollectionByEmail(MEMBERS_COLLECTION, email);
-            role = 'member';
+        const identity = await verifyGoogleIdentityToken(idToken);
+        if (!identity) {
+            return { status: 'error', error: 'We could not verify your Google sign-in. Please try again.' };
         }
 
-        if (!userDoc) {
-            userDoc = await findUserInCollectionByEmail(COOKS_COLLECTION, email);
-            role = 'cook';
+        const account = await findAccountByEmail(identity.email);
+        if (!account) {
+            await writePendingSignup({ email: identity.email, displayName: identity.name, photoURL: identity.picture });
+            return { status: 'needs_onboarding', email: identity.email, displayName: identity.name, photoURL: identity.picture };
         }
 
-        if (!userDoc) {
-            return null; // Email not registered in the system
+        const { role, snap } = account;
+        const data: DocumentData = { ...snap.data() };
+        const updates: DocumentData = {};
+        if (identity.name && data.displayName !== identity.name) updates.displayName = identity.name;
+        if (identity.picture && data.photoURL !== identity.picture) updates.photoURL = identity.picture;
+        if (Object.keys(updates).length > 0) {
+            await setDoc(doc(db, collectionForRole(role), snap.id), updates, { merge: true });
+            Object.assign(data, updates);
         }
 
-        const userData = userDoc.data();
-
-        let updated = false;
-        const dataToUpdate: any = {};
-        if (displayName && userData.displayName !== displayName) { dataToUpdate.displayName = displayName; updated = true; }
-        if (photoURL && userData.photoURL !== photoURL) { dataToUpdate.photoURL = photoURL; updated = true; }
-
-        // Backfill houseCode/housePin for legacy owners created before these fields existed.
-        let houseCode = userData.houseCode;
-        let housePin = userData.housePin;
-        if (role === 'user' && (!houseCode || !housePin)) {
-            houseCode = houseCode || generateRandomCode(6);
-            housePin = housePin || generateRandomPin(6);
-            dataToUpdate.houseCode = houseCode;
-            dataToUpdate.housePin = housePin;
-            updated = true;
-        }
-
-        if (updated) {
-            const collectionName = role === 'user' ? USERS_COLLECTION : role === 'member' ? MEMBERS_COLLECTION : COOKS_COLLECTION;
-            await setDoc(doc(db, collectionName, userDoc.id), dataToUpdate, { merge: true });
-        }
-
-        const user: User = {
-            uid: userDoc.id,
-            email: userData.email,
-            displayName: displayName || userData.displayName || undefined,
-            photoURL: photoURL || userData.photoURL || undefined,
-            role: role,
-            phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
-            linkedUserId: userData.linkedUserId,
-            householdId: getHouseholdId(role, userDoc.id, userData.linkedUserId),
-            houseCode,
-            housePin,
-        };
-
-        const cookieStore = await cookies();
-        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-
-        return user;
+        return { status: 'ok', user: await startSession(role, snap.id, data, 'google') };
     } catch (error) {
         console.error('Google login error:', error);
-        return null;
+        return { status: 'error', error: 'Sign-in failed. Please try again.' };
     }
-}
-
-/**
- * Generate a random alphabetic string
- */
-function generateRandomCode(length: number): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    let result = '';
-    for ( let i = 0; i < length; i++ ) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-}
-
-/**
- * Generate a random numeric string
- */
-function generateRandomPin(length: number): string {
-    const chars = '0123456789';
-    let result = '';
-    for ( let i = 0; i < length; i++ ) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
 }
 
 /**
  * Create a new household for a new user (via Google Auth)
  * Optionally generates a 30-day meal plan based on the chosen category.
+ *
+ * The email, name and photo come from the verified pending sign-up set by
+ * loginWithGoogle; the arguments are kept for compatibility, and a
+ * different `email` is rejected.
  */
 export async function createNewHousehold(email: string, category?: string, displayName?: string, photoURL?: string): Promise<User | null> {
+    void displayName; void photoURL; // taken from the verified Google identity instead
     try {
-        const houseCode = generateRandomCode(6);
-        const housePin = generateRandomPin(6);
+        const pending = await readPendingSignup();
+        if (!pending) {
+            console.warn('[auth] createNewHousehold: no verified Google sign-in pending');
+            return null;
+        }
+        if (email && email.toLowerCase() !== pending.email.toLowerCase()) {
+            console.warn('[auth] createNewHousehold: email does not match the verified sign-in');
+            return null;
+        }
+
+        // Already registered (double submit, or invited meanwhile) — just sign in.
+        const existing = await findAccountByEmail(pending.email);
+        if (existing) {
+            return await startSession(existing.role, existing.snap.id, { ...existing.snap.data() }, 'google');
+        }
+
+        const dietCategory = normalizeDietCategory(category);
+        const houseCode = randomLetters(6);
+        const housePin = randomDigits(6);
 
         const newUserData = {
-            email,
-            displayName: displayName || null,
-            photoURL: photoURL || null,
+            email: pending.email,
+            displayName: pending.displayName || null,
+            photoURL: pending.photoURL || null,
             role: 'user',
             phoneNumber: process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
             createdAt: new Date(),
             houseCode,
             housePin,
-            dietCategory: category || null,
+            dietCategory,
         };
         const docRef = await addDoc(collection(db, USERS_COLLECTION), newUserData);
         const householdId = docRef.id;
 
         // If a category was provided, generate 30 days of meals
-        if (category) {
+        if (dietCategory) {
             try {
                 let plan: MonthlyPlanDay[] = [];
-                const categoryDocId = category.toLowerCase().trim();
+                const categoryDocId = dietCategory.toLowerCase().trim();
                 const categoryTemplateRef = doc(db, 'category_templates', categoryDocId);
                 const categoryTemplateSnap = await getDoc(categoryTemplateRef);
-                
+
                 if (categoryTemplateSnap.exists()) {
                     // Use static template data from Firestore
                     plan = categoryTemplateSnap.data().plan as MonthlyPlanDay[];
                 } else {
                     // Generate using AI and save statically for future users
-                    plan = await generate30DayPlan(category);
+                    plan = await generate30DayPlan(dietCategory);
                     if (plan && plan.length > 0) {
                         await setDoc(categoryTemplateRef, {
-                            category: category,
+                            category: dietCategory,
                             plan: plan,
                             created_at: serverTimestamp()
                         });
@@ -159,13 +197,13 @@ export async function createNewHousehold(email: string, category?: string, displ
                 if (plan && plan.length > 0) {
                     const batch = writeBatch(db);
                     const mealsCollectionName = `households/${householdId}/meals`;
-                    
+
                     for (const day of plan) {
                         const dayDocId = day.day.toString().padStart(2, '0');
                         const mealRef = doc(db, mealsCollectionName, dayDocId);
-                        
-                        const isVegetarian = category.toLowerCase() === 'vegan' || category.toLowerCase() === 'vegetarian';
-                        
+
+                        const isVegetarian = dietCategory.toLowerCase() === 'vegan' || dietCategory.toLowerCase() === 'vegetarian';
+
                         batch.set(mealRef, {
                             id: dayDocId,
                             date: "unknown", // It's a template generic day
@@ -207,27 +245,10 @@ export async function createNewHousehold(email: string, category?: string, displ
             }
         }
 
-        const user: User = {
-            uid: householdId,
-            email: newUserData.email,
-            displayName: newUserData.displayName || undefined,
-            photoURL: newUserData.photoURL || undefined,
-            role: 'user',
-            phoneNumber: newUserData.phoneNumber,
-            householdId: householdId,
-            houseCode: newUserData.houseCode,
-            housePin: newUserData.housePin,
-        };
-
-        const cookieStore = await cookies();
-        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-
-        return user;
+        const user = buildUser('user', householdId, newUserData);
+        const sessionToken = await writeSessionCookie(user, 'google');
+        await clearPendingSignup();
+        return { ...user, sessionToken };
     } catch (error) {
         console.error('Create new household error:', error);
         return null;
@@ -235,13 +256,32 @@ export async function createNewHousehold(email: string, category?: string, displ
 }
 
 /**
- * Join an existing household as a member (via Google Auth)
+ * Join an existing household as a member (via Google Auth). Like
+ * createNewHousehold, the identity comes from the verified pending sign-up.
  */
 export async function joinHousehold(email: string, houseCode: string, housePin: string, displayName?: string, photoURL?: string): Promise<{ success: boolean; user?: User; error?: string }> {
+    void displayName; void photoURL; // taken from the verified Google identity instead
     try {
+        const pending = await readPendingSignup();
+        if (!pending || (email && email.toLowerCase() !== pending.email.toLowerCase())) {
+            return { success: false, error: 'Your sign-in has expired. Please sign in with Google again.' };
+        }
+
+        const existing = await findAccountByEmail(pending.email);
+        if (existing) {
+            const user = await startSession(existing.role, existing.snap.id, { ...existing.snap.data() }, 'google');
+            return { success: true, user };
+        }
+
+        const code = typeof houseCode === 'string' ? houseCode.trim().toUpperCase() : '';
+        const pin = typeof housePin === 'string' ? housePin.trim() : '';
+        if (!code || !pin || code.length > 32 || pin.length > 32) {
+            return { success: false, error: 'Invalid House ID or PIN.' };
+        }
+
         // Find the owner with matching houseCode and housePin
         const usersRef = collection(db, USERS_COLLECTION);
-        const q = query(usersRef, where('houseCode', '==', houseCode.toUpperCase()), where('housePin', '==', housePin));
+        const q = query(usersRef, where('houseCode', '==', code), where('housePin', '==', pin));
         const querySnapshot = await getDocs(q);
 
         if (querySnapshot.empty) {
@@ -253,9 +293,9 @@ export async function joinHousehold(email: string, houseCode: string, housePin: 
 
         // Create the new member
         const newMemberData = {
-            email,
-            displayName: displayName || null,
-            photoURL: photoURL || null,
+            email: pending.email,
+            displayName: pending.displayName || null,
+            photoURL: pending.photoURL || null,
             role: 'member',
             phoneNumber: process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
             createdAt: new Date(),
@@ -270,82 +310,83 @@ export async function joinHousehold(email: string, houseCode: string, housePin: 
             console.error('Failed to redistribute responsibilities after joinHousehold:', redistErr);
         }
 
-        const user: User = {
-            uid: docRef.id,
-            email: newMemberData.email,
-            displayName: newMemberData.displayName || undefined,
-            photoURL: newMemberData.photoURL || undefined,
-            role: 'member',
-            phoneNumber: newMemberData.phoneNumber,
-            linkedUserId: ownerId,
-            householdId: ownerId,
-        };
+        const user = buildUser('member', docRef.id, newMemberData);
+        const sessionToken = await writeSessionCookie(user, 'google');
+        await clearPendingSignup();
 
-        const cookieStore = await cookies();
-        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-
-        return { success: true, user };
+        return { success: true, user: { ...user, sessionToken } };
     } catch (error) {
         console.error('Join household error:', error);
         return { success: false, error: 'An error occurred while joining.' };
     }
 }
 
+function toMillis(value: unknown): number | null {
+    if (value instanceof Timestamp) return value.toMillis();
+    if (value && typeof value === 'object' && typeof (value as { seconds?: unknown }).seconds === 'number') {
+        return (value as { seconds: number }).seconds * 1000;
+    }
+    return null;
+}
 
 /**
- * Login with email and password (Firestore-based)
+ * Check a password or PIN for one account document, with a lockout after
+ * repeated failures. On success, legacy plaintext values are replaced by a
+ * hash (one-time migration on login) and the failure counter is cleared.
+ */
+async function checkCredential(snap: QueryDocumentSnapshot<DocumentData>, secret: string, kind: 'password' | 'pin'): Promise<boolean> {
+    const data = snap.data();
+    const lockedUntil = toMillis(data.authLockedUntil);
+    if (lockedUntil && lockedUntil > Date.now()) {
+        await dummyVerify(secret);
+        return false;
+    }
+
+    const hashField = kind === 'pin' ? 'pinHash' : 'passwordHash';
+    const legacyRaw = kind === 'pin' ? (data.pin ?? data.password) : data.password;
+    const legacyValue = typeof legacyRaw === 'number' ? String(legacyRaw) : legacyRaw;
+    const result = await verifySecret(secret, data[hashField], legacyValue);
+
+    if (!result.ok) {
+        const failures = (typeof data.authFailures === 'number' ? data.authFailures : 0) + 1;
+        const update: DocumentData = failures >= MAX_FAILED_ATTEMPTS
+            ? { authFailures: 0, authLockedUntil: Timestamp.fromMillis(Date.now() + LOCKOUT_MS) }
+            : { authFailures: increment(1) };
+        await updateDoc(snap.ref, update).catch(err => console.error('[auth] could not record failed attempt', err));
+        return false;
+    }
+
+    const update: DocumentData = {};
+    if (data.authFailures) update.authFailures = deleteField();
+    if (data.authLockedUntil) update.authLockedUntil = deleteField();
+    const plaintextFields = kind === 'pin' ? ['pin', 'password'] : ['password'];
+    const hasPlaintext = plaintextFields.some(f => data[f] !== undefined);
+    if (result.needsRehash || hasPlaintext) {
+        update[hashField] = await hashSecret(secret);
+        for (const f of plaintextFields) {
+            if (data[f] !== undefined) update[f] = deleteField();
+        }
+    }
+    if (Object.keys(update).length > 0) {
+        await updateDoc(snap.ref, update).catch(err => console.error('[auth] could not update credential record', err));
+    }
+    return true;
+}
+
+/**
+ * Login with email and password (Firestore-based). Not used by the current
+ * UI (owners/members sign in with Google); kept for compatibility.
  */
 export async function loginWithEmail(email: string, password: string): Promise<User | null> {
     try {
-        // Try to find user in all collections
-        // 1. Check 'users' (Owners)
-        let userDoc = await findUserInCollection(USERS_COLLECTION, email, password);
-        let role: UserRole = 'user';
-
-        // 2. Check 'members'
-        if (!userDoc) {
-            userDoc = await findUserInCollection(MEMBERS_COLLECTION, email, password);
-            role = 'member';
+        if (typeof password !== 'string' || !password) return null;
+        const account = await findAccountByEmail(email);
+        if (!account) {
+            await dummyVerify(password);
+            return null;
         }
-
-        // 3. Check 'cooks'
-        if (!userDoc) {
-            userDoc = await findUserInCollection(COOKS_COLLECTION, email, password);
-            role = 'cook';
-        }
-
-        if (!userDoc) {
-            return null; // Not found in any collection
-        }
-
-        const userData = userDoc.data();
-
-        const user: User = {
-            uid: userDoc.id,
-            email: userData.email,
-            displayName: userData.displayName || undefined,
-            photoURL: userData.photoURL || undefined,
-            role: role, // Explicitly set based on collection found
-            phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
-            linkedUserId: userData.linkedUserId, // Get linked ID if exists
-            householdId: getHouseholdId(role, userDoc.id, userData.linkedUserId),
-        };
-
-        // Create cookie
-        const cookieStore = await cookies();
-        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-
-        return user;
+        if (!(await checkCredential(account.snap, password, 'password'))) return null;
+        return await startSession(account.role, account.snap.id, { ...account.snap.data() }, 'password');
     } catch (error) {
         console.error('Login error:', error);
         return null;
@@ -357,37 +398,24 @@ export async function loginWithEmail(email: string, password: string): Promise<U
  */
 export async function loginWithPhoneAndPin(phoneNumber: string, pin: string): Promise<User | null> {
     try {
-        const usersRef = collection(db, COOKS_COLLECTION);
-        const q = query(usersRef, where('phoneNumber', '==', phoneNumber), where('pin', '==', pin));
-        const querySnapshot = await getDocs(q);
-        
+        if (typeof phoneNumber !== 'string' || typeof pin !== 'string' || !pin) return null;
+        const candidates = Array.from(new Set([phoneNumber, phoneNumber.trim()])).filter(p => p && p.length <= 32);
+        if (candidates.length === 0) return null;
+
+        const querySnapshot = await getDocs(
+            query(collection(db, COOKS_COLLECTION), where('phoneNumber', 'in', candidates))
+        );
         if (querySnapshot.empty) {
+            await dummyVerify(pin);
             return null; // Cook not found or invalid PIN
         }
 
-        const userDoc = querySnapshot.docs[0];
-        const userData = userDoc.data();
-
-        const user: User = {
-            uid: userDoc.id,
-            email: userData.email || '',
-            displayName: userData.displayName || undefined,
-            photoURL: userData.photoURL || undefined,
-            role: 'cook',
-            phoneNumber: userData.phoneNumber,
-            linkedUserId: userData.linkedUserId,
-            householdId: getHouseholdId('cook', userDoc.id, userData.linkedUserId),
-        };
-
-        const cookieStore = await cookies();
-        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-
-        return user;
+        for (const cookDoc of querySnapshot.docs) {
+            if (await checkCredential(cookDoc, pin, 'pin')) {
+                return await startSession('cook', cookDoc.id, { ...cookDoc.data() }, 'pin');
+            }
+        }
+        return null;
     } catch (error) {
         console.error('Cook Login error:', error);
         return null;
@@ -395,68 +423,23 @@ export async function loginWithPhoneAndPin(phoneNumber: string, pin: string): Pr
 }
 
 /**
- * Derive the household ID for a user.
- * Owners (role 'user') use their own uid; members/cooks use their linkedUserId.
- */
-function getHouseholdId(role: UserRole, uid: string, linkedUserId?: string): string {
-    if (role === 'user') return uid;
-    return linkedUserId || uid; // fallback to own uid if no link
-}
-
-// Helper to find user in a specific collection
-async function findUserInCollection(collectionName: string, email: string, password: string) {
-    const usersRef = collection(db, collectionName);
-    const q = query(usersRef, where('email', '==', email), where('password', '==', password));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.empty ? null : querySnapshot.docs[0];
-}
-
-// Helper to find user by email only (used for OAuth flows)
-async function findUserInCollectionByEmail(collectionName: string, email: string) {
-    const usersRef = collection(db, collectionName);
-    const q = query(usersRef, where('email', '==', email));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.empty ? null : querySnapshot.docs[0];
-}
-
-/**
  * Logout
  */
 export async function logout(): Promise<void> {
-    const cookieStore = await cookies();
-    cookieStore.delete(COOKIE_NAME);
+    await clearSessionCookies();
+    await clearPendingSignup();
 }
 
 /**
- * Get current authenticated user
+ * Get current authenticated user (from the verified session cookie).
  */
 export async function getCurrentUser(): Promise<User | null> {
     try {
-        const cookieStore = await cookies();
-        const userCookie = cookieStore.get(COOKIE_NAME);
-
-        if (userCookie && userCookie.value) {
-            const user = JSON.parse(userCookie.value) as User;
-
-            // Fix for old cookies missing linkedUserId
-            if ((user.role === 'member' || user.role === 'cook') && !user.linkedUserId) {
-                const collectionName = user.role === 'member' ? MEMBERS_COLLECTION : COOKS_COLLECTION;
-                const docRef = doc(db, collectionName, user.uid);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    user.linkedUserId = docSnap.data().linkedUserId;
-                }
-            }
-
-            if (!user.householdId) {
-                user.householdId = getHouseholdId(user.role, user.uid, user.linkedUserId);
-            }
-            return user;
-        }
+        return await getSessionUser();
     } catch (error) {
-        // Ignore parsing errors
+        console.error('getCurrentUser error:', error);
+        return null;
     }
-    return null;
 }
 
 /**
@@ -468,60 +451,39 @@ export async function isAuthenticated(): Promise<boolean> {
 }
 
 /**
- * Refresh current session from db, patch old cookies, update token
+ * Re-check a verified session against Firestore and issue a fresh token.
+ * If Firestore can't be reached, the still-valid token is kept as-is rather
+ * than logging the user out over a transient error.
+ */
+async function renewSession(session: VerifiedSession, originalToken?: string): Promise<User | null> {
+    let account: User | null;
+    try {
+        account = await loadAccount(session.user.role, session.user.uid);
+    } catch (error) {
+        console.error('Session refresh: account lookup failed; keeping current session', error);
+        if (originalToken) await writeSessionTokenCookie(originalToken);
+        return { ...session.user, sessionToken: originalToken };
+    }
+    if (!account) {
+        await clearSessionCookies();
+        return null;
+    }
+    const sessionToken = await writeSessionCookie(account, session.amr, session.authAt);
+    return { ...account, sessionToken };
+}
+
+/**
+ * Refresh current session from db and roll the signed cookie forward.
+ * Returns the user including `sessionToken` for the iOS PWA fallback.
  */
 export async function refreshSession(): Promise<User | null> {
     try {
-        const cookieStore = await cookies();
-        const userCookie = cookieStore.get(COOKIE_NAME);
-        if (!userCookie || !userCookie.value) return null;
-
-        const parsedUser = JSON.parse(userCookie.value) as User;
-
-        let targetCollection = USERS_COLLECTION;
-        if (parsedUser.role === 'member') targetCollection = MEMBERS_COLLECTION;
-        if (parsedUser.role === 'cook') targetCollection = COOKS_COLLECTION;
-
-        const docRef = doc(db, targetCollection, parsedUser.uid);
-        const docSnap = await getDoc(docRef);
-
-        if (!docSnap.exists()) {
-            cookieStore.delete(COOKIE_NAME);
+        const current = await readSessionCookieWithToken();
+        if (!current) {
+            await clearSessionCookies(); // also drops any legacy unsigned cookie
             return null;
         }
-
-        const userData = docSnap.data();
-
-        // Backfill houseCode/housePin for legacy owners created before these fields existed.
-        let houseCode = userData.houseCode;
-        let housePin = userData.housePin;
-        if (parsedUser.role === 'user' && (!houseCode || !housePin)) {
-            houseCode = houseCode || generateRandomCode(6);
-            housePin = housePin || generateRandomPin(6);
-            await setDoc(docRef, { houseCode, housePin }, { merge: true });
-        }
-
-        const freshUser: User = {
-            uid: docSnap.id,
-            email: userData.email,
-            displayName: userData.displayName || undefined,
-            photoURL: userData.photoURL || undefined,
-            role: parsedUser.role,
-            phoneNumber: userData.phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
-            linkedUserId: userData.linkedUserId,
-            householdId: getHouseholdId(parsedUser.role, docSnap.id, userData.linkedUserId),
-            houseCode,
-            housePin,
-        };
-
-        cookieStore.set(COOKIE_NAME, JSON.stringify(freshUser), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-
-        return freshUser;
+        return await renewSession(current.session, current.token);
     } catch (error) {
         console.error('Session refresh error:', error);
         return null;
@@ -529,46 +491,76 @@ export async function refreshSession(): Promise<User | null> {
 }
 
 /**
- * Restore cookie session from client-provided user data (e.g. from localStorage).
- * This acts as our "refresh token" mechanism when browser clears cookies (like iOS PWA) 
- * but client state is retained.
+ * Restore the session cookie from the signed token the client kept in
+ * localStorage (iOS PWAs drop cookies). Only tokens this server signed are
+ * accepted; the account is re-checked in Firestore before a new cookie is set.
  */
-export async function restoreCookieFromClient(user: User): Promise<boolean> {
+export async function restoreSession(sessionToken: string): Promise<User | null> {
     try {
-        const cookieStore = await cookies();
-        cookieStore.set(COOKIE_NAME, JSON.stringify(user), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-        });
-        return true;
+        const session = verifySessionToken(sessionToken);
+        if (!session) return null;
+        return await renewSession(session, sessionToken);
     } catch (error) {
-        console.error('Failed to restore cookie from client:', error);
-        return false;
+        console.error('Failed to restore session:', error);
+        return null;
     }
 }
 
 /**
- * Create a new user in Firestore
+ * @deprecated Use restoreSession(user.sessionToken). Kept so older callers
+ * compile; it no longer trusts the user data, only the signed token in it.
+ */
+export async function restoreCookieFromClient(user: User): Promise<boolean> {
+    return !!(await restoreSession(user?.sessionToken ?? ''));
+}
+
+/**
+ * Create a new user in Firestore. Owner-only; members and cooks are always
+ * added to the caller's own household (a different `linkedUserId` is
+ * rejected). Creating another owner account requires an app admin.
  */
 export async function createUser(
     email: string,
     password: string,
     role: UserRole,
     phoneNumber: string,
-    linkedUserId?: string // Optional: ID of the owner creating this user
+    linkedUserId?: string // Optional: must be the caller's household if given
 ): Promise<{ success: boolean; userId?: string; error?: string }> {
     try {
+        const access = await authorizeHousehold('createUser', undefined, ['user']);
+        if (!access) return { success: false, error: 'Only the household owner can add people.' };
+
+        if (role !== 'user' && role !== 'member' && role !== 'cook') {
+            return { success: false, error: 'Invalid role' };
+        }
+        if (role === 'user' && !(await isAppAdmin())) {
+            return { success: false, error: 'Only app admins can create owner accounts.' };
+        }
+        if (role !== 'user' && linkedUserId && linkedUserId !== access.householdId) {
+            return { success: false, error: 'You can only add people to your own household.' };
+        }
+
+        const cleanEmail = typeof email === 'string' ? email.trim() : '';
+        const cleanPhone = typeof phoneNumber === 'string' ? phoneNumber.trim() : '';
+        const secret = typeof password === 'string' ? password : '';
+        if (cleanEmail.length > 320 || cleanPhone.length > 32) {
+            return { success: false, error: 'Invalid email or phone number' };
+        }
+        if (role === 'cook') {
+            if (!cleanPhone) return { success: false, error: 'Phone number is required for cooks' };
+            if (secret.length < 4 || secret.length > 64) return { success: false, error: 'PIN must be at least 4 characters' };
+        } else {
+            if (!cleanEmail) return { success: false, error: 'Email is required' };
+            if (secret && secret.length < 6) return { success: false, error: 'Password must be at least 6 characters' };
+        }
+
         // Determine target collection based on role
-        let targetCollection = USERS_COLLECTION;
-        if (role === 'member') targetCollection = MEMBERS_COLLECTION;
-        if (role === 'cook') targetCollection = COOKS_COLLECTION;
+        const targetCollection = collectionForRole(role);
 
         // Check if user already exists in ANY collection (email must be unique globally, except for cooks using phone only constraint)
-        const existsInUsers = email ? await checkEmailExists(USERS_COLLECTION, email) : false;
-        const existsInMembers = email ? await checkEmailExists(MEMBERS_COLLECTION, email) : false;
-        const existsInCooks = email ? await checkEmailExists(COOKS_COLLECTION, email) : false;
+        const existsInUsers = cleanEmail ? await checkEmailExists(USERS_COLLECTION, cleanEmail) : false;
+        const existsInMembers = cleanEmail ? await checkEmailExists(MEMBERS_COLLECTION, cleanEmail) : false;
+        const existsInCooks = cleanEmail ? await checkEmailExists(COOKS_COLLECTION, cleanEmail) : false;
 
         if (existsInUsers || existsInMembers || existsInCooks) {
             return { success: false, error: 'User with this email already exists' };
@@ -576,50 +568,48 @@ export async function createUser(
 
         // For cooks, phone number must be unique
         if (role === 'cook') {
-            const q = query(collection(db, COOKS_COLLECTION), where('phoneNumber', '==', phoneNumber));
+            const q = query(collection(db, COOKS_COLLECTION), where('phoneNumber', '==', cleanPhone));
             const snap = await getDocs(q);
             if (!snap.empty) {
                 return { success: false, error: 'Cook with this phone number already exists' };
             }
         }
 
-        // Prepare User Data
-        const userData: any = {
-            email: email || `${phoneNumber}@cook.local`, // Fallback for cooks without email
-            password, // In production, you should hash this!
+        // Prepare User Data — only hashes of the password/PIN are stored.
+        const userData: DocumentData = {
+            email: cleanEmail || `${cleanPhone}@cook.local`, // Fallback for cooks without email
             role,
-            phoneNumber: phoneNumber || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
+            phoneNumber: cleanPhone || process.env.NEXT_PUBLIC_HOUSE_OWNER_PHONE || '',
             createdAt: new Date(),
         };
 
         if (role === 'cook') {
-            userData.pin = password; // Save the password as PIN for cooks
+            userData.pinHash = await hashSecret(secret);
+        } else if (secret) {
+            userData.passwordHash = await hashSecret(secret);
         }
 
-        // Link to owner if applicable (members/cooks)
-        if ((role === 'member' || role === 'cook') && linkedUserId) {
-            userData.linkedUserId = linkedUserId;
-        } else if (role !== 'user') {
-            // If trying to create member/cook without link (shouldn't happen in app flow)
-            // We can allow it but it's orphans.
+        // Members/cooks always belong to the caller's household.
+        if (role === 'member' || role === 'cook') {
+            userData.linkedUserId = access.householdId;
         }
 
         // Create new user document in correct collection
         const docRef = await addDoc(collection(db, targetCollection), userData);
 
         // When a member or cook joins, rebalance cooking duties across the household.
-        if ((role === 'member' || role === 'cook') && linkedUserId) {
+        if (role === 'member' || role === 'cook') {
             try {
-                await resetHouseholdResponsibilities(linkedUserId);
+                await resetHouseholdResponsibilities(access.householdId);
             } catch (redistErr) {
                 console.error('Failed to redistribute responsibilities after createUser:', redistErr);
             }
         }
 
         return { success: true, userId: docRef.id };
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error creating user:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to create user' };
     }
 }
 
@@ -639,7 +629,7 @@ async function checkEmailExists(collectionName: string, email: string): Promise<
 /**
  * Get total count of members (users + members)
  * If Caller is 'user' (Owner): Count Self (1) + Count of documents in 'members' linked to this user.
- * If Caller is 'member': Return count from their linked owner? Or just 1? 
+ * If Caller is 'member': Return count from their linked owner? Or just 1?
  * For now, assuming we want the TOTAL household count.
  */
 export async function getMemberCount(): Promise<number> {
@@ -647,11 +637,7 @@ export async function getMemberCount(): Promise<number> {
         const currentUser = await getCurrentUser();
         if (!currentUser) return 0;
 
-        let ownerId = currentUser.uid;
-        // If current user is a member or cook, use their linked owner ID to find siblings
-        if ((currentUser.role === 'member' || currentUser.role === 'cook') && currentUser.linkedUserId) {
-            ownerId = currentUser.linkedUserId;
-        }
+        const ownerId = currentUser.householdId;
 
         // Count the owner (1)
         let count = 1;
@@ -743,6 +729,9 @@ export async function removeHouseholdMember(
         if (!currentUser) return { success: false, error: 'Not authenticated.' };
         if (currentUser.role !== 'user') return { success: false, error: 'Only the household owner can remove members.' };
         if (memberUid === currentUser.uid) return { success: false, error: 'You cannot remove yourself.' };
+        if (!isSafeDocId(memberUid) || (memberRole !== 'member' && memberRole !== 'cook')) {
+            return { success: false, error: 'Member not found.' };
+        }
 
         const collectionName = memberRole === 'member' ? MEMBERS_COLLECTION : COOKS_COLLECTION;
         const memberRef = doc(db, collectionName, memberUid);
@@ -764,11 +753,14 @@ export async function removeHouseholdMember(
 }
 
 /**
- * Get the household team's chosen diet category
+ * Get the household team's chosen diet category. The household is the
+ * caller's own; a different `householdId` is rejected.
  */
-export async function getHouseholdDietCategory(householdId: string): Promise<string | null> {
+export async function getHouseholdDietCategory(householdId?: string): Promise<string | null> {
     try {
-        const ownerDoc = await getDoc(doc(db, USERS_COLLECTION, householdId));
+        const access = await authorizeHousehold('getHouseholdDietCategory', householdId);
+        if (!access) return null;
+        const ownerDoc = await getDoc(doc(db, USERS_COLLECTION, access.householdId));
         if (ownerDoc.exists()) {
             return ownerDoc.data().dietCategory || null;
         }
@@ -780,11 +772,18 @@ export async function getHouseholdDietCategory(householdId: string): Promise<str
 }
 
 /**
- * Change the household team's diet category
+ * Change the household team's diet category (owner only, own household).
  * Completely replaces all generic menu template days with the new AI plan
  */
-export async function changeDietCategory(householdId: string, newCategory: string): Promise<boolean> {
+export async function changeDietCategory(householdId: string | undefined, newCategory: string): Promise<boolean> {
     try {
+        const access = await authorizeHousehold('changeDietCategory', householdId, ['user']);
+        if (!access) return false;
+        const category = normalizeDietCategory(newCategory);
+        if (!category) return false;
+        householdId = access.householdId;
+        newCategory = category;
+
         let plan: MonthlyPlanDay[] = [];
         const categoryDocId = newCategory.toLowerCase().trim();
         const categoryTemplateRef = doc(db, 'category_templates', categoryDocId);
@@ -814,7 +813,7 @@ export async function changeDietCategory(householdId: string, newCategory: strin
 
                 batch.set(mealRef, {
                     id: dayDocId,
-                    date: "unknown", 
+                    date: "unknown",
                     day_of_week: "Unknown",
                     created_at: serverTimestamp(),
                     updated_at: serverTimestamp(),

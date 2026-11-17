@@ -3,6 +3,11 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { generationProviderOptions, runWithFallback } from './aiModels';
+import { getSessionUser } from './server/currentUser';
+import { readPendingSignup } from './server/session';
+
+/** These actions spend the AI provider quota, so they require a signed-in user. */
+const MAX_MEAL_NAME_LENGTH = 120;
 
 // Gemini 3.5 Flash-Lite is the primary model, with Groq gpt-oss-20b as the
 // fallback (see ./aiModels). Both providers enforce these zod schemas through
@@ -35,6 +40,8 @@ export type GeneratedMealData = z.infer<typeof mealSchema>;
 
 export async function generateMealDetails(mealName: string): Promise<GeneratedMealData | null> {
     try {
+        if (!(await getSessionUser())) return null;
+        if (typeof mealName !== 'string' || !mealName.trim() || mealName.length > MAX_MEAL_NAME_LENGTH) return null;
         return await runWithFallback('meal details', async ({ model, maxRetries }) => {
             const { output } = await generateText({
                 model,
@@ -61,6 +68,15 @@ export async function fetchAlternativeMeals(
     currentMealName: string,
     type: 'protein' | 'balanced' | 'unhealthy'
 ): Promise<AlternativeMeal[]> {
+    try {
+        if (!(await getSessionUser())) return [];
+    } catch (error) {
+        console.error('Error checking session for alternative meals:', error);
+        return [];
+    }
+    if (typeof currentMealName !== 'string' || currentMealName.length > MAX_MEAL_NAME_LENGTH) return [];
+    if (type !== 'protein' && type !== 'balanced' && type !== 'unhealthy') return [];
+
     let promptTemplate = '';
 
     switch (type) {
@@ -131,6 +147,14 @@ export async function fetchFancyMealsLikeOurs(
     mealType: 'breakfast' | 'lunch' | 'dinner',
     menu: HouseholdMenu,
 ): Promise<AlternativeMeal[]> {
+    try {
+        if (!(await getSessionUser())) return [];
+    } catch (error) {
+        console.error('Error checking session for fancy meals:', error);
+        return [];
+    }
+    if (typeof currentMealName !== 'string' || currentMealName.length > MAX_MEAL_NAME_LENGTH) return [];
+
     const slots: (keyof HouseholdMenu)[] = ['breakfast', 'lunch', 'dinner'];
     const cleaned = Object.fromEntries(
         slots.map((slot) => [slot, cleanMenuNames(menu?.[slot])]),
@@ -187,6 +211,9 @@ export type MonthlyPlanDay = z.infer<typeof monthlyPlanSchema>['days'][0];
 
 export async function generate30DayPlan(category: string): Promise<MonthlyPlanDay[]> {
     try {
+        // Signed-in owners (diet change) or a verified Google sign-up in progress (onboarding).
+        if (!(await getSessionUser()) && !(await readPendingSignup())) return [];
+        if (typeof category !== 'string' || !category.trim() || category.length > 40) return [];
         return await runWithFallback('30-day plan', async ({ model, maxRetries }) => {
             const { output } = await generateText({
                 model,

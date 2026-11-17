@@ -1,10 +1,11 @@
 'use server';
 
-import { db } from './firebase';
-import { addDoc, collection, doc, serverTimestamp, getDocs, query, orderBy, limit, writeBatch, arrayUnion } from 'firebase/firestore';
+import { db, addDoc, collection, doc, serverTimestamp, getDocs, query, orderBy, limit, writeBatch, arrayUnion } from './server/db';
 import { NotificationType } from '@/types/meal';
+import { authorizeHousehold, isSafeDocId } from './server/guards';
 
 const MAX_RETAINED = 50;
+const MAX_MARK_READ = 100;
 
 function notificationsCollection(householdId: string) {
     return collection(db, `households/${householdId}/notifications`);
@@ -14,6 +15,9 @@ function notificationsCollection(householdId: string) {
  * Append a household notification. Fire-and-forget from the caller's
  * perspective — write failures are logged but never throw so a broken
  * notification pipeline cannot block a meal write.
+ *
+ * This module is reachable from the browser, so the household must be the
+ * caller's own and the actor is always the signed-in user.
  */
 export async function createNotification(
     householdId: string,
@@ -27,6 +31,11 @@ export async function createNotification(
     }
 ): Promise<void> {
     try {
+        const access = await authorizeHousehold('createNotification', householdId);
+        if (!access || !input || typeof input !== 'object') return;
+        householdId = access.householdId;
+        input = { ...input, actorId: access.actor.uid, actorName: access.actor.name };
+
         const cleanPayload: Record<string, string | number> = {};
         if (input.payload) {
             for (const [k, v] of Object.entries(input.payload)) {
@@ -54,16 +63,28 @@ export async function createNotification(
 }
 
 /**
- * Mark the given notification ids as read by `userId`. Silently ignores
+ * Mark the given notification ids as read by the signed-in user. Silently ignores
  * missing docs so a delete-during-scroll race can't error the UI.
+ * `householdId` / `userId` must match the session (kept for compatibility).
  */
 export async function markNotificationsRead(
     householdId: string,
     userId: string,
     notificationIds: string[],
 ): Promise<void> {
-    if (!notificationIds.length) return;
+    if (!Array.isArray(notificationIds) || !notificationIds.length) return;
     try {
+        const access = await authorizeHousehold('markNotificationsRead', householdId);
+        if (!access) return;
+        if (userId && userId !== access.user.uid) {
+            console.warn(`[authz] markNotificationsRead: rejected — ${access.user.uid} tried to mark for ${userId}`);
+            return;
+        }
+        householdId = access.householdId;
+        userId = access.user.uid;
+        notificationIds = notificationIds.filter(isSafeDocId).slice(0, MAX_MARK_READ);
+        if (!notificationIds.length) return;
+
         const batch = writeBatch(db);
         notificationIds.forEach(id => {
             const ref = doc(db, `households/${householdId}/notifications`, id);
