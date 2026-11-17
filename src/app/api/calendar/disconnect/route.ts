@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { clearCalendarConnection, getCalendarConnection } from '@/lib/calendarTokens';
+import { clearCalendarConnection, getCalendarConnection } from '@/lib/server/calendarTokens';
 import { revokeRefreshToken } from '@/lib/googleCalendar';
 
 export async function POST() {

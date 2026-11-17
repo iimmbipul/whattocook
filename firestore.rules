@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// TARGET Firestore rules for whattocook.
+//
+// !! Do NOT deploy these until the server talks to Firestore through
+// !! firebase-admin (see docs/SECURITY.md, "Step 2"). Today the server uses
+// !! the unauthenticated *client* SDK, so these rules would break the app.
+//
+// Once the server uses firebase-admin (which bypasses rules), the browser only
+// needs one thing: a live read of its own household's notifications for the
+// notification bell. The server signs the browser into Firebase Auth with a
+// custom token carrying a `hid` (household ID) claim taken from the verified
+// session. Everything else — users, members, cooks, meals, templates — is
+// server-only.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /households/{householdId}/notifications/{notificationId} {
+      allow read: if request.auth != null
+                  && request.auth.token.hid is string
+                  && request.auth.token.hid == householdId;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, writeBatch } from 'firebase/firestore';
+import { adminLoadCollection, adminReplaceCollection } from '@/lib/adminData';
 import { useLocale } from '@/context/LocaleContext';
 
 type CollectionName = 'menu_templates' | 'users' | 'category_templates' | 'meals_T6GggZ7CrPSSoY9uEydL' | 'households/T6GggZ7CrPSSoY9uEydL/meals';
@@ -19,19 +18,22 @@ export default function AdminJsonEditor() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedCollection]);
 
+    // Reads and writes go through app-admin-only server actions; the browser
+    // no longer talks to these collections directly.
     const fetchData = async () => {
         setLoading(true);
         setMessage(null);
         try {
-            const querySnapshot = await getDocs(collection(db, selectedCollection));
-            const data = querySnapshot.docs.map(doc => {
-                const d = doc.data();
-                return { _id: doc.id, ...d };
-            });
-            setJsonData(JSON.stringify(data, null, 2));
-        } catch (error: any) {
+            const result = await adminLoadCollection(selectedCollection);
+            if (result.ok) {
+                setJsonData(result.json);
+            } else {
+                setJsonData('');
+                setMessage({ type: 'error', text: `Failed to fetch data: ${result.error}` });
+            }
+        } catch (error) {
             console.error("Error fetching data:", error);
-            setMessage({ type: 'error', text: `Failed to fetch data: ${error.message}` });
+            setMessage({ type: 'error', text: `Failed to fetch data: ${error instanceof Error ? error.message : String(error)}` });
         } finally {
             setLoading(false);
         }
@@ -46,79 +48,15 @@ export default function AdminJsonEditor() {
         setMessage(null);
 
         try {
-            let parsedData;
-            try {
-                parsedData = JSON.parse(jsonData);
-            } catch (e) {
-                throw new Error("Invalid JSON format");
-            }
-
-            if (!Array.isArray(parsedData)) {
-                throw new Error("JSON data must be an array of objects");
-            }
-
-            const currentDocsSnapshot = await getDocs(collection(db, selectedCollection));
-            const currentIds = new Set(currentDocsSnapshot.docs.map(d => d.id));
-            const newIds = new Set();
-
-            const batchArray = [];
-            let batch = writeBatch(db);
-            let operationCount = 0;
-
-            for (const item of parsedData) {
-                if (!item._id) {
-                    const newDocRef = doc(collection(db, selectedCollection));
-                    item._id = newDocRef.id;
-                }
-
-                const docId = item._id;
-                newIds.add(docId);
-
-                const { _id, ...dataToSave } = item;
-
-                if (dataToSave.created_at && typeof dataToSave.created_at === 'string') {
-                    const d = new Date(dataToSave.created_at);
-                    if (!isNaN(d.getTime())) { /* handle if needed */ }
-                }
-
-                const docRef = doc(db, selectedCollection, docId);
-                batch.set(docRef, dataToSave);
-                operationCount++;
-
-                if (operationCount >= 400) {
-                    batchArray.push(batch);
-                    batch = writeBatch(db);
-                    operationCount = 0;
-                }
-            }
-
-            for (const oldId of currentIds) {
-                if (!newIds.has(oldId)) {
-                    batch.delete(doc(db, selectedCollection, oldId as string));
-                    operationCount++;
-
-                    if (operationCount >= 400) {
-                        batchArray.push(batch);
-                        batch = writeBatch(db);
-                        operationCount = 0;
-                    }
-                }
-            }
-
-            if (operationCount > 0) {
-                batchArray.push(batch);
-            }
-
-            for (const b of batchArray) {
-                await b.commit();
-            }
+            const result = await adminReplaceCollection(selectedCollection, jsonData);
+            if (!result.ok) throw new Error(result.error);
 
             setMessage({ type: 'success', text: 'Database updated successfully!' });
             fetchData();
 
-        } catch (error: any) {
+        } catch (error) {
             console.error("Error updating database:", error);
-            setMessage({ type: 'error', text: `Failed to update: ${error.message}` });
+            setMessage({ type: 'error', text: `Failed to update: ${error instanceof Error ? error.message : String(error)}` });
         } finally {
             setLoading(false);
         }

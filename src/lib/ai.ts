@@ -3,6 +3,11 @@
 import { generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { z } from 'zod';
+import { getSessionUser } from './server/currentUser';
+import { readPendingSignup } from './server/session';
+
+/** These actions spend the Groq API quota, so they require a signed-in user. */
+const MAX_MEAL_NAME_LENGTH = 120;
 
 const alternativeMealsSchema = z.object({
     alternatives: z.array(z.object({
@@ -38,6 +43,8 @@ export type GeneratedMealData = z.infer<typeof mealSchema>;
 
 export async function generateMealDetails(mealName: string): Promise<GeneratedMealData | null> {
     try {
+        if (!(await getSessionUser())) return null;
+        if (typeof mealName !== 'string' || !mealName.trim() || mealName.length > MAX_MEAL_NAME_LENGTH) return null;
         const groq = getGroqProvider();
 
         const { text } = await generateText({
@@ -81,6 +88,9 @@ export async function fetchAlternativeMeals(
     type: 'protein' | 'balanced' | 'unhealthy'
 ): Promise<AlternativeMeal[]> {
     try {
+        if (!(await getSessionUser())) return [];
+        if (typeof currentMealName !== 'string' || currentMealName.length > MAX_MEAL_NAME_LENGTH) return [];
+        if (type !== 'protein' && type !== 'balanced' && type !== 'unhealthy') return [];
         const groq = getGroqProvider();
         let promptTemplate = "";
 
@@ -141,6 +151,9 @@ export type MonthlyPlanDay = z.infer<typeof monthlyPlanSchema>['days'][0];
 
 export async function generate30DayPlan(category: string): Promise<MonthlyPlanDay[]> {
     try {
+        // Signed-in owners (diet change) or a verified Google sign-up in progress (onboarding).
+        if (!(await getSessionUser()) && !(await readPendingSignup())) return [];
+        if (typeof category !== 'string' || !category.trim() || category.length > 40) return [];
         const groq = getGroqProvider();
         
         const { text } = await generateText({

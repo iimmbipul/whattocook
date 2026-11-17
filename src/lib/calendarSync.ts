@@ -1,9 +1,9 @@
-'use server';
+import 'server-only';
 
 import { db } from './firebase';
 import { doc, getDoc, updateDoc, deleteField, setDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { MealDocument, MealItem } from '@/types/meal';
-import { getCalendarConnection } from './calendarTokens';
+import { getCalendarConnection } from './server/calendarTokens';
 import {
     refreshAccessToken,
     createCalendarEvent,

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { cookies } from 'next/headers';
 import { exchangeCodeForTokens, fetchUserinfo } from '@/lib/googleCalendar';
-import { saveCalendarConnection } from '@/lib/calendarTokens';
+import { saveCalendarConnection } from '@/lib/server/calendarTokens';
 
 const STATE_COOKIE = 'gcal_oauth_state';
 
