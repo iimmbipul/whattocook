@@ -1,9 +1,15 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Flame, Scale, Pizza, Search, CheckCircle, Utensils } from 'lucide-react';
-import { fetchAlternativeMeals, generateMealDetails, AlternativeMeal } from '@/lib/ai';
-import { updateMeal } from '@/lib/firestore';
+import { X, Flame, Scale, Pizza, Search, CheckCircle, Utensils, Sparkles } from 'lucide-react';
+import {
+    fetchAlternativeMeals,
+    fetchFancyMealsLikeOurs,
+    generateMealDetails,
+    AlternativeMeal,
+    HouseholdMenu,
+} from '@/lib/ai';
+import { getAllMeals, updateMeal } from '@/lib/firestore';
 import { translateTexts } from '@/lib/translate';
 import { supportedLocales } from '@/lib/i18n';
 import { MealItem, MealItemTranslation } from '@/types/meal';
@@ -20,7 +26,23 @@ interface AlternativeMealsModalProps {
     onRefresh: () => void;
 }
 
-type TabType = 'protein' | 'balanced' | 'unhealthy';
+type TabType = 'fancy' | 'protein' | 'balanced' | 'unhealthy';
+
+const EMPTY_MEALS: Record<TabType, AlternativeMeal[]> = {
+    fancy: [],
+    protein: [],
+    balanced: [],
+    unhealthy: [],
+};
+
+/** Read the household's 30-day menu from Firestore as meal names per slot. */
+async function loadHouseholdMenu(householdId: string): Promise<HouseholdMenu> {
+    const days = await getAllMeals(householdId);
+    days.sort((a, b) => a.id.localeCompare(b.id));
+    const names = (slot: keyof HouseholdMenu) =>
+        days.map((d) => d[slot]?.item_name?.trim()).filter((n): n is string => !!n);
+    return { breakfast: names('breakfast'), lunch: names('lunch'), dinner: names('dinner') };
+}
 
 async function buildTranslations(
     item_name: string,
@@ -66,13 +88,11 @@ export default function AlternativeMealsModal({
     onRefresh
 }: AlternativeMealsModalProps) {
     const { user: authUser } = useAuth();
-    const [activeTab, setActiveTab] = useState<TabType>('protein');
-    const [mealsMap, setMealsMap] = useState<Record<TabType, AlternativeMeal[]>>({
-        protein: [],
-        balanced: [],
-        unhealthy: []
-    });
+    const [activeTab, setActiveTab] = useState<TabType>('fancy');
+    const [mealsMap, setMealsMap] = useState<Record<TabType, AlternativeMeal[]>>(EMPTY_MEALS);
     const fetchedTabs = useRef<Set<string>>(new Set());
+    // The 30-day menu is read once per modal opening and reused.
+    const menuRef = useRef<HouseholdMenu | null>(null);
     const [isLoadingMeals, setIsLoadingMeals] = useState<boolean>(false);
     const [updatingMealName, setUpdatingMealName] = useState<string | null>(null);
 
@@ -80,8 +100,9 @@ export default function AlternativeMealsModal({
     useEffect(() => {
         if (!isOpen) {
             fetchedTabs.current.clear();
-            setMealsMap({ protein: [], balanced: [], unhealthy: [] });
-            setActiveTab('protein');
+            menuRef.current = null;
+            setMealsMap(EMPTY_MEALS);
+            setActiveTab('fancy');
         }
     }, [isOpen, currentMealName]);
 
@@ -94,7 +115,13 @@ export default function AlternativeMealsModal({
         const loadMeals = async () => {
             setIsLoadingMeals(true);
             try {
-                const results = await fetchAlternativeMeals(currentMealName, activeTab);
+                let results: AlternativeMeal[];
+                if (activeTab === 'fancy') {
+                    if (!menuRef.current) menuRef.current = await loadHouseholdMenu(householdId);
+                    results = await fetchFancyMealsLikeOurs(currentMealName, mealType, menuRef.current);
+                } else {
+                    results = await fetchAlternativeMeals(currentMealName, activeTab);
+                }
                 setMealsMap(prev => ({
                     ...prev,
                     [activeTab]: results
@@ -108,11 +135,12 @@ export default function AlternativeMealsModal({
         };
 
         loadMeals();
-    }, [isOpen, activeTab, currentMealName]);
+    }, [isOpen, activeTab, currentMealName, mealType, householdId]);
 
     if (!isOpen) return null;
 
     const tabs = [
+        { id: 'fancy' as TabType, label: 'Fancy, like ours', icon: Sparkles },
         { id: 'protein' as TabType, label: 'High on protein', icon: Flame },
         { id: 'balanced' as TabType, label: 'Balanced meal', icon: Scale },
         { id: 'unhealthy' as TabType, label: 'no no no', icon: Pizza },
@@ -229,7 +257,9 @@ export default function AlternativeMealsModal({
                     {isLoadingMeals ? (
                         <div className="flex flex-col items-center justify-center py-12 text-brand-dark">
                             <Search className="animate-bounce text-brand-primary mb-2" size={32} />
-                            <p className="font-medium animate-pulse">Finding nice options...</p>
+                            <p className="font-medium animate-pulse">
+                                {activeTab === 'fancy' ? 'Reading your 30-day menu...' : 'Finding nice options...'}
+                            </p>
                         </div>
                     ) : currentMeals.length === 0 ? (
                         <div className="text-center py-10 text-brand-dark/60">
@@ -237,6 +267,11 @@ export default function AlternativeMealsModal({
                         </div>
                     ) : (
                         <div className="space-y-3">
+                            {activeTab === 'fancy' && (
+                                <p className="text-xs text-brand-dark/70 px-1">
+                                    Special dishes in the style of your 30-day menu, with nothing you already have.
+                                </p>
+                            )}
                             {currentMeals.map((m, idx) => (
                                 <button
                                     key={idx}
