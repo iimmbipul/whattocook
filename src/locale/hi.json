@@ -219,5 +219,10 @@
         "all": "सभी",
         "today": "आज",
         "tomorrow": "कल"
+    },
+    "mealImage": {
+        "photoBy": "फ़ोटो:",
+        "photosBy": "भोजन फ़ोटो:",
+        "on": "—"
     }
 }
