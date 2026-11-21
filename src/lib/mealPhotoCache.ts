@@ -62,6 +62,55 @@ export function useMealPhotoCacheVersion(): number {
     return useSyncExternalStore(subscribe, () => version, () => 0);
 }
 
+/*
+ * Hand-set image URLs (meal.image_url) that failed to load in this browser.
+ * Many stored meals carry old, dead links; once one fails we fall back to the
+ * Unsplash photo instead of the emoji placeholder. Remembered for a day so a
+ * dead link isn't retried on every page view.
+ */
+const BROKEN_KEY = 'wtc_broken_image_urls_v1';
+const BROKEN_TTL_MS = 24 * 60 * 60 * 1000;
+let broken: Map<string, number> | null = null;
+
+function brokenUrls(): Map<string, number> {
+    if (broken) return broken;
+    broken = new Map();
+    if (typeof window === 'undefined') return broken;
+    try {
+        const stored = JSON.parse(localStorage.getItem(BROKEN_KEY) || '{}') as Record<string, number>;
+        const now = Date.now();
+        for (const [url, at] of Object.entries(stored)) if (now - at < BROKEN_TTL_MS) broken.set(url, at);
+    } catch {
+        /* ignore */
+    }
+    return broken;
+}
+
+export function isBrokenImageUrl(url: string | undefined): boolean {
+    return !!url && brokenUrls().has(url);
+}
+
+export function markBrokenImageUrl(url: string): void {
+    const map = brokenUrls();
+    if (map.has(url)) return;
+    map.set(url, Date.now());
+    try {
+        localStorage.setItem(BROKEN_KEY, JSON.stringify(Object.fromEntries(map)));
+    } catch {
+        /* ignore */
+    }
+    emit();
+}
+
+/**
+ * The image URL to actually use for a meal: its hand-set URL unless that is
+ * known to be broken. Re-renders when a URL is marked broken.
+ */
+export function useUsableImageUrl(imageUrl: string | undefined): string | undefined {
+    useMealPhotoCacheVersion();
+    return imageUrl && !isBrokenImageUrl(imageUrl) ? imageUrl : undefined;
+}
+
 function subscribe(listener: () => void) {
     listeners.add(listener);
     return () => listeners.delete(listener);

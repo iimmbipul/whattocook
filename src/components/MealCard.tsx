@@ -306,7 +306,7 @@ export default function MealCard({
                         </details>
                     )}
 
-                    {!meal.image_url && <MealPhotoCredit mealName={meal.item_name} className="mt-3 text-right" />}
+                    <MealPhotoCredit mealName={meal.item_name} imageUrl={meal.image_url || undefined} className="mt-3 text-right" />
                 </article>
             </Card>
 

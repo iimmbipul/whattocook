@@ -180,7 +180,7 @@ export default function MyPlatesPage() {
                                 </section>
                             ))}
                             <MealPhotoCredits
-                                mealNames={visible.filter(i => !i.meal.image_url).map(i => i.meal.item_name)}
+                                meals={visible.map(i => ({ name: i.meal.item_name, imageUrl: i.meal.image_url || undefined }))}
                                 className="pt-2 text-center"
                             />
                         </div>

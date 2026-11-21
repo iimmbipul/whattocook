@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { photoSrc } from '@/lib/mealPhoto';
-import { peekMealPhoto, useMealPhoto, useMealPhotoCacheVersion } from '@/lib/mealPhotoCache';
+import { isBrokenImageUrl, markBrokenImageUrl, peekMealPhoto, useMealPhoto, useMealPhotoCacheVersion, useUsableImageUrl } from '@/lib/mealPhotoCache';
 import type { MealPhoto } from '@/lib/mealPhoto';
 import { useLocale } from '@/context/LocaleContext';
 import { cn } from '@/lib/cn';
@@ -10,7 +10,10 @@ import { cn } from '@/lib/cn';
 interface MealImageProps {
     /** Meal name used to find a matching photo (use the canonical, untranslated name). */
     mealName: string;
-    /** A manually set image URL; takes precedence over the automatic photo. */
+    /**
+     * A manually set image URL; takes precedence over the automatic photo.
+     * If it fails to load, the automatic photo is used instead.
+     */
     imageUrl?: string;
     /** Rendered size in CSS pixels; the image is requested at 1x and 2x of this. */
     size: number;
@@ -26,8 +29,11 @@ interface MealImageProps {
  * colour as a placeholder, fades the image in, and falls back to `fallback`
  * when there is no photo or it fails to load — never a broken image icon.
  */
-export default function MealImage({ mealName, imageUrl, size, fallback, alt = '', className }: MealImageProps) {
+export default function MealImage({ mealName, imageUrl: requestedUrl, size, fallback, alt = '', className }: MealImageProps) {
     const { t } = useLocale();
+    // A hand-set URL that already failed in this browser is skipped, so the
+    // automatic photo is used instead (many stored meals have dead links).
+    const imageUrl = useUsableImageUrl(requestedUrl);
     const boxRef = useRef<HTMLSpanElement>(null);
     const [nearViewport, setNearViewport] = useState(
         () => typeof window !== 'undefined' && !('IntersectionObserver' in window),
@@ -85,7 +91,11 @@ export default function MealImage({ mealName, imageUrl, size, fallback, alt = ''
                     loading="lazy"
                     decoding="async"
                     onLoad={() => setLoadedSrc(src)}
-                    onError={() => setFailedSrc(src)}
+                    onError={() => {
+                        // A dead hand-set link: remember it and switch to the automatic photo.
+                        if (imageUrl && src === imageUrl) markBrokenImageUrl(imageUrl);
+                        else setFailedSrc(src);
+                    }}
                     className={cn(
                         'absolute inset-0 h-full w-full object-cover transition-opacity duration-300',
                         loaded ? 'opacity-100' : 'opacity-0',
@@ -96,12 +106,17 @@ export default function MealImage({ mealName, imageUrl, size, fallback, alt = ''
     );
 }
 
-/** "Photo by <name> on Unsplash" — required attribution, with profile links. */
-export function MealPhotoCredit({ mealName, className }: { mealName: string; className?: string }) {
+/**
+ * "Photo by <name> on Unsplash" — required attribution, with profile links.
+ * Shown only while the Unsplash photo is the one displayed (not a working
+ * hand-set `imageUrl`).
+ */
+export function MealPhotoCredit({ mealName, imageUrl, className }: { mealName: string; imageUrl?: string; className?: string }) {
     const { t } = useLocale();
+    const manualUrl = useUsableImageUrl(imageUrl);
     const entry = useMealPhoto(mealName, { enabled: false });
     const photo = entry?.photo;
-    if (!photo) return null;
+    if (!photo || manualUrl) return null;
     const link = 'font-medium text-ink-muted underline-offset-2 hover:text-ink hover:underline';
     return (
         <p className={cn('text-[11px] text-ink-subtle', className)}>
@@ -117,12 +132,13 @@ export function MealPhotoCredit({ mealName, className }: { mealName: string; cla
  * One attribution line for a list of dishes (e.g. My Plates), crediting each
  * photographer whose photo is currently shown, with links to their profiles.
  */
-export function MealPhotoCredits({ mealNames, className }: { mealNames: string[]; className?: string }) {
+export function MealPhotoCredits({ meals, className }: { meals: { name: string; imageUrl?: string }[]; className?: string }) {
     const { t } = useLocale();
-    useMealPhotoCacheVersion(); // re-render as lookups resolve
+    useMealPhotoCacheVersion(); // re-render as lookups resolve or links break
     const byPhotographer = new Map<string, MealPhoto>();
-    for (const name of mealNames) {
-        const photo = peekMealPhoto(name)?.photo;
+    for (const meal of meals) {
+        if (meal.imageUrl && !isBrokenImageUrl(meal.imageUrl)) continue; // a working hand-set image is shown
+        const photo = peekMealPhoto(meal.name)?.photo;
         if (photo && !byPhotographer.has(photo.photographer)) byPhotographer.set(photo.photographer, photo);
     }
     const photos = Array.from(byPhotographer.values());
