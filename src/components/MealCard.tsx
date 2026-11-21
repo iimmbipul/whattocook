@@ -16,6 +16,7 @@ import { Badge } from './ui/Badge';
 import { Button, IconButton } from './ui/Button';
 import { Dialog } from './ui/Dialog';
 import { Spinner } from './ui/Spinner';
+import MealImage, { MealPhotoCredit } from './MealImage';
 
 function getVideoEmbed(url?: string): { src: string; kind: 'youtube' | 'instagram' } | null {
     if (!url) return null;
@@ -139,14 +140,15 @@ export default function MealCard({
             <Card className="p-4 sm:p-5">
                 <article aria-labelledby={titleId}>
                     <div className="flex items-start gap-3 sm:gap-4">
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-muted text-2xl" aria-hidden="true">
-                            {meal.image_url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={meal.image_url} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                                MEAL_ICON[mealType]
-                            )}
-                        </div>
+                        {/* A hand-set image_url wins; otherwise a photo matched to the dish name.
+                            Uses the untranslated name, which gives the best search results. */}
+                        <MealImage
+                            mealName={meal.item_name}
+                            imageUrl={meal.image_url || undefined}
+                            size={64}
+                            fallback={<span className="text-2xl">{MEAL_ICON[mealType]}</span>}
+                            className="rounded-2xl"
+                        />
 
                         <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
@@ -303,6 +305,8 @@ export default function MealCard({
                             </ol>
                         </details>
                     )}
+
+                    {!meal.image_url && <MealPhotoCredit mealName={meal.item_name} className="mt-3 text-right" />}
                 </article>
             </Card>
 

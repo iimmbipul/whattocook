@@ -346,7 +346,7 @@ export default function EditMealModal({ meal, mealId, mealType, isOpen, onClose,
                         <Field label={t('editMeal.recipeUrlLabel')}>
                             <TextInput type="url" inputMode="url" value={formData.recipe_url} onChange={(e) => set({ recipe_url: e.target.value })} placeholder={t('editMeal.recipeUrlPlaceholder')} />
                         </Field>
-                        <Field label={t('editMeal.imageUrlLabel')}>
+                        <Field label={t('editMeal.imageUrlLabel')} hint={t('editMeal.imageAutoHint')}>
                             <TextInput type="url" inputMode="url" value={formData.image_url} onChange={(e) => set({ image_url: e.target.value })} placeholder={t('editMeal.imageUrlPlaceholder')} />
                         </Field>
                     </fieldset>

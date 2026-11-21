@@ -134,7 +134,8 @@
         "scopeThisDay": "This day only",
         "scopeThisDayHint": "Only {{date}} changes.",
         "scopeEveryMonth": "This day every month",
-        "scopeEveryMonthHint": "Updates the monthly template for this day."
+        "scopeEveryMonthHint": "Updates the monthly template for this day.",
+        "imageAutoHint": "Leave empty to use a matching food photo automatically."
     },
     "bulk": {
         "title": "Bulk Assign Responsibility",
@@ -273,5 +274,10 @@
         "countTasks": "{{count}} duties",
         "today": "Today",
         "tomorrow": "Tomorrow"
+    },
+    "mealImage": {
+        "photoBy": "Photo by",
+        "photosBy": "Food photos by",
+        "on": "on"
     }
 }

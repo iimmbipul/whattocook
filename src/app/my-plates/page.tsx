@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Segmented';
 import { Skeleton } from '@/components/ui/Spinner';
+import MealImage, { MealPhotoCredits } from '@/components/MealImage';
 
 type Entry = { date: string; mealType: string; meal: MealItem };
 type MealFilter = 'All' | 'Breakfast' | 'Lunch' | 'Dinner';
@@ -156,9 +157,13 @@ export default function MyPlatesPage() {
                                     <Card className="divide-y divide-line">
                                         {day.entries.map(entry => (
                                             <div key={`${entry.date}-${entry.mealType}`} className="flex items-center gap-3 px-4 py-3.5">
-                                                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-muted text-lg" aria-hidden="true">
-                                                    {MEAL_ICON[entry.mealType] ?? '🍽️'}
-                                                </span>
+                                                <MealImage
+                                                    mealName={entry.meal.item_name}
+                                                    imageUrl={entry.meal.image_url || undefined}
+                                                    size={44}
+                                                    fallback={<span className="text-lg">{MEAL_ICON[entry.mealType] ?? '🍽️'}</span>}
+                                                    className="rounded-xl"
+                                                />
                                                 <div className="min-w-0 flex-1">
                                                     <p className="text-xs font-semibold uppercase tracking-wider text-accent-strong">
                                                         {t(`mealCard.${entry.mealType.toLowerCase()}`)}
@@ -174,6 +179,10 @@ export default function MyPlatesPage() {
                                     </Card>
                                 </section>
                             ))}
+                            <MealPhotoCredits
+                                mealNames={visible.filter(i => !i.meal.image_url).map(i => i.meal.item_name)}
+                                className="pt-2 text-center"
+                            />
                         </div>
                     )}
                 </>
