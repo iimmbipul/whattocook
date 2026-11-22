@@ -17,6 +17,8 @@ import { Alert, Field, TextInput } from '@/components/ui/Field';
 import { Skeleton, Spinner } from '@/components/ui/Spinner';
 import { CopyValue } from '@/components/ui/CopyValue';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
+import MyRatings from '@/components/ratings/MyRatings';
+import RatingPrivacySetting from '@/components/ratings/RatingPrivacySetting';
 import { cn } from '@/lib/cn';
 
 const DIET_CATEGORIES = [
@@ -333,6 +335,9 @@ export default function ProfilePage() {
             </div>
 
             <div className="space-y-4">
+                {/* Ratings received for meals this person cooked */}
+                <MyRatings uid={user.uid} isHiredCook={user.role === 'cook'} />
+
                 {/* Diet plan */}
                 <Section
                     icon={<Utensils size={18} />}
@@ -560,6 +565,9 @@ export default function ProfilePage() {
                         )}
                     </Section>
                 )}
+
+                {/* Rating privacy */}
+                {isOwner && <RatingPrivacySetting uid={user.uid} />}
             </div>
         </AppShell>
     );

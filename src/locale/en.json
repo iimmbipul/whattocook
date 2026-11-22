@@ -279,5 +279,77 @@
         "photoBy": "Photo by",
         "photosBy": "Food photos by",
         "on": "on"
+    },
+    "ratings": {
+        "today": "Today",
+        "yesterday": "Yesterday",
+        "dinner": "Dinner",
+        "breakfastLunch": "Breakfast + Lunch",
+        "prompt": {
+            "breakfastLunch": {
+                "today": "How were today’s breakfast and lunch?",
+                "yesterday": "How were yesterday’s breakfast and lunch?"
+            },
+            "dinner": {
+                "today": "How was tonight’s dinner?",
+                "yesterday": "How was yesterday’s dinner?"
+            }
+        },
+        "food": "Food",
+        "cookNamed": "Cook: {{name}}",
+        "cookUnnamed": "Cook",
+        "starLabel": "{{count}} out of 5 stars",
+        "addComment": "Add a comment",
+        "commentLabel": "Comment (optional)",
+        "commentPlaceholder": "What did you like, or what could be better?",
+        "submit": "Send rating",
+        "sending": "Sending…",
+        "skip": "Skip",
+        "skipAria": "Skip rating this meal",
+        "thanks": "Thanks! Your rating was sent.",
+        "error": "Couldn’t send your rating. Please try again.",
+        "anonymousNote": "Your rating is anonymous.",
+        "namedNote": "Your name is shown with your rating.",
+        "countRatings": "{{count}} ratings",
+        "countRatingsOne": "1 rating",
+        "countMeals": "{{count}} meals",
+        "countMealsOne": "1 meal",
+        "feedback": {
+            "title": "New ratings for your cooking",
+            "gotIt": "Got it",
+            "seeAll": "See all ratings"
+        },
+        "my": {
+            "title": "My ratings",
+            "description": "How the household rated the meals you cooked.",
+            "empty": "No ratings yet",
+            "emptyBody": "Ratings appear here after members rate a meal you cooked.",
+            "foodAverage": "Food average",
+            "cookAverage": "Cook average",
+            "received": "Ratings received",
+            "breakdown": "Rating breakdown",
+            "trend": "Weekly average, last 12 weeks",
+            "trendAria": "Weekly average food and cook rating over the last 12 weeks",
+            "weekOf": "Week of {{date}}",
+            "noRatingsWeek": "No ratings this week",
+            "showTable": "Show as table",
+            "week": "Week",
+            "ratingsColumn": "Ratings",
+            "history": "Meal history",
+            "showAll": "Show all {{count}}",
+            "showLess": "Show less",
+            "comments": "Recent comments",
+            "noComments": "No comments yet.",
+            "anonymousNote": "Ratings are anonymous: names are hidden.",
+            "namedNote": "Your household shows names with ratings."
+        },
+        "privacy": {
+            "title": "Rating privacy",
+            "description": "Choose whether cooks see who wrote each rating.",
+            "anonymous": "Anonymous",
+            "named": "Show names",
+            "saved": "Saved.",
+            "error": "Couldn’t save. Please try again."
+        }
     }
 }

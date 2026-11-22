@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { useLocale } from '@/context/LocaleContext';
 import { cn } from '@/lib/cn';
 import Header, { MobileTabBar } from './Header';
+import MealFeedback from './ratings/MealFeedback';
 
 /**
  * Shared page frame for signed-in screens: skip link, header (desktop nav),
@@ -28,6 +29,7 @@ export default function AppShell({ children, wide = false }: { children: ReactNo
                 {children}
             </main>
             <MobileTabBar />
+            <MealFeedback />
         </div>
     );
 }
