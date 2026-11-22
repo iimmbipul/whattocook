@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/ratings.test.mjs"
+    "test": "node --test tests/ratings.test.mjs tests/grocery.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.147",

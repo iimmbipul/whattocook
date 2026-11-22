@@ -9,6 +9,7 @@ import AdminJsonEditor from '@/components/AdminJsonEditor';
 import { getAdminCapabilities, migrateStoredCredentials } from '@/lib/adminData';
 import { UserRole } from '@/types/meal';
 import BulkResponsibilityManager from '@/components/BulkResponsibilityManager';
+import GroceryAdmin from '@/components/grocery/GroceryAdmin';
 import MultiDatePicker from '@/components/MultiDatePicker';
 import { isSameDay } from 'date-fns';
 import { useLocale } from '@/context/LocaleContext';
@@ -267,6 +268,9 @@ export default function AdminPage() {
                         </div>
                     </div>
                 </Section>
+
+                {/* Grocery settings (owner) and the default catalogue (app admin) */}
+                <GroceryAdmin />
 
                 {/* App-admin maintenance (shared templates) */}
                 {appAdmin ? (

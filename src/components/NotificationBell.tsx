@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo } from 'react';
-import { Bell, BellOff, UserPlus, UserMinus, UserX, UserCheck, Utensils, Users } from 'lucide-react';
+import { Bell, BellOff, ShoppingBasket, UserPlus, UserMinus, UserX, UserCheck, Utensils, Users } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from './AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
@@ -22,13 +22,16 @@ function TypeIcon({ type }: { type: NotificationDoc['type'] }) {
         case 'responsibility_changed':
         case 'responsibility_bulk_changed':
             return <Users {...props} />;
+        case 'grocery_out': return <ShoppingBasket {...props} />;
         default: return <Bell {...props} />;
     }
 }
 
 function typeTone(type: NotificationDoc['type']): string {
     switch (type) {
-        case 'meal_skipped': return 'bg-danger-soft text-danger';
+        case 'meal_skipped':
+        case 'grocery_out':
+            return 'bg-danger-soft text-danger';
         case 'meal_unskipped': return 'bg-success-soft text-success';
         case 'responsibility_changed':
         case 'responsibility_bulk_changed':
@@ -94,6 +97,12 @@ function useMessage() {
                 return t('notifications.respBulkChanged', {
                     actor: n.actorName,
                     count: Number(p.count ?? 0),
+                });
+            }
+            case 'grocery_out': {
+                return t('notifications.groceryOut', {
+                    actor: n.actorName,
+                    items: String(p.items ?? ''),
                 });
             }
             default:
