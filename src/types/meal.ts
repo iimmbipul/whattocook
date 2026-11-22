@@ -105,7 +105,8 @@ export type NotificationType =
   | 'guest_added'
   | 'guest_removed'
   | 'responsibility_changed'
-  | 'responsibility_bulk_changed';
+  | 'responsibility_bulk_changed'
+  | 'grocery_out';
 
 export interface NotificationDoc {
   id: string;

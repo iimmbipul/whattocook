@@ -14,6 +14,7 @@ import { getDashboardData } from '@/lib/pageData';
 import { HouseholdMember, MealDocument } from '@/types/meal';
 import { getFormattedDate } from '@/lib/permissions';
 import MealCard from './MealCard';
+import GroceryToday from './grocery/GroceryToday';
 import { addDays, format, isSameDay } from 'date-fns';
 import { useLocale } from '@/context/LocaleContext';
 import {
@@ -264,6 +265,8 @@ export default function DashboardContent() {
                     </p>
                 )}
             </div>
+
+            {isToday && <GroceryToday />}
 
             {renderDayMeals(selectedMeal, dateString)}
         </AppShell>

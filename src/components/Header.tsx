@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useId } from 'react';
-import { CalendarDays, LogOut, Settings, User as UserIcon, UtensilsCrossed, type LucideIcon } from 'lucide-react';
+import { CalendarDays, LogOut, Package, Settings, ShoppingBasket, User as UserIcon, UtensilsCrossed, type LucideIcon } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { logout } from '@/lib/auth';
 import { useLocale } from '@/context/LocaleContext';
@@ -28,6 +28,10 @@ export function useNavItems(): NavItem[] {
     const items: NavItem[] = [
         { href: '/', label: t('nav.today'), icon: CalendarDays },
         { href: '/my-plates', label: t('nav.myPlates'), icon: UtensilsCrossed },
+        // The cook keeps the pantry; everyone else sees the shopping list.
+        user?.role === 'cook'
+            ? { href: '/pantry', label: t('nav.pantry'), icon: Package }
+            : { href: '/groceries', label: t('nav.groceries'), icon: ShoppingBasket },
         { href: '/profile', label: t('nav.profile'), icon: UserIcon },
     ];
     if (user?.role === 'user') items.push({ href: '/admin', label: t('nav.admin'), icon: Settings });
