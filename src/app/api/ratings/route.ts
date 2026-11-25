@@ -4,7 +4,7 @@ import { getRatingsStatus } from '@/lib/server/ratings';
 
 /**
  * GET /api/ratings → RatingsStatus: meal sessions the signed-in member can
- * still rate, and new feedback for the signed-in cook.
+ * still rate, and new ratings the signed-in cook or chef has not seen yet.
  *
  * A GET route rather than a Server Action so it runs alongside the page's own
  * data loads instead of queueing behind them.

@@ -1,6 +1,12 @@
 /**
  * Meal rating rules shared by the server and the browser.
  *
+ * Two different people are rated after each session:
+ *   - the cook, for every dish they cooked (a hired cook; in a household with
+ *     no hired cook, the flatmate on duty cooks, so their dishes are theirs);
+ *   - the chef, the flatmate on duty for the session, for how they managed it
+ *     and how creative the menu was.
+ *
  * Pure functions with no imports, so they can be unit-tested directly with
  * `node --test` (see tests/ratings.test.mjs). Firestore access lives in
  * src/lib/server/ratings.ts.
@@ -12,6 +18,17 @@ export const RATING_SESSIONS: readonly RatingSession[] = ['breakfastLunch', 'din
 
 export function isRatingSession(value: unknown): value is RatingSession {
     return value === 'breakfastLunch' || value === 'dinner';
+}
+
+/** One dish per slot: the meal plan has one item for each. */
+export type MealSlot = 'breakfast' | 'lunch' | 'dinner';
+export const SESSION_SLOTS: Record<RatingSession, readonly MealSlot[]> = {
+    breakfastLunch: ['breakfast', 'lunch'],
+    dinner: ['dinner'],
+};
+
+export function isMealSlot(value: unknown): value is MealSlot {
+    return value === 'breakfast' || value === 'lunch' || value === 'dinner';
 }
 
 /**
@@ -31,9 +48,9 @@ export const SESSION_OPENS_AT: Record<RatingSession, number> = {
 export const RATING_WINDOW_MINUTES = 24 * 60;
 
 export const MAX_COMMENT_LENGTH = 300;
-/** Newest comments kept on a session summary. */
+/** Newest notes kept on a session summary. */
 export const MAX_COMMENTS_PER_SESSION = 20;
-/** Weeks of trend data kept per cook. */
+/** Weeks of trend data kept per person. */
 export const TREND_WEEKS = 12;
 
 export interface LocalTime {
@@ -110,10 +127,14 @@ export const ratingDocId = (date: string, session: RatingSession, uid: string) =
 
 export type Attendance = { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | undefined;
 
-/** Members are eating unless they marked Skip. Breakfast + Lunch counts if they ate either meal. */
+/** Members are eating unless they marked Skip for that meal. */
+export function attendedSlot(attendance: Attendance, slot: MealSlot): boolean {
+    return attendance?.[slot] !== false;
+}
+
+/** Breakfast + Lunch counts if they ate either meal. */
 export function attendedSession(attendance: Attendance, session: RatingSession): boolean {
-    if (session === 'dinner') return attendance?.dinner !== false;
-    return attendance?.breakfast !== false || attendance?.lunch !== false;
+    return SESSION_SLOTS[session].some(slot => attendedSlot(attendance, slot));
 }
 
 export function isStars(value: unknown): value is number {
@@ -126,63 +147,124 @@ export function cleanComment(value: unknown): string {
     return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_COMMENT_LENGTH);
 }
 
-/** Running totals for averages and the 1–5 breakdown. Skipped ratings never reach these. */
-export interface RatingTotals {
-    /** Submitted ratings (every one has a food score). */
-    count: number;
-    foodSum: number;
-    /** foodHist[0] = number of 1-star ratings … foodHist[4] = 5-star. */
-    foodHist: number[];
-    /** Ratings that included a cook score. */
-    cookCount: number;
-    cookSum: number;
-    cookHist: number[];
+/** Who can be rated for one session, from one member's point of view. */
+export interface RatingTargets {
+    /** Dishes this member ate, one per slot, in meal order. */
+    dishes: { slot: MealSlot; name: string }[];
+    /** Who gets the dish ratings: the hired cooks, or the chef when there is none. Empty: dishes aren't rated. */
+    cookUids: string[];
+    /** The flatmate on duty, rated for managing the meal. Null when there is nobody else to rate. */
+    chefUid: string | null;
 }
 
-export function emptyTotals(): RatingTotals {
-    return { count: 0, foodSum: 0, foodHist: [0, 0, 0, 0, 0], cookCount: 0, cookSum: 0, cookHist: [0, 0, 0, 0, 0] };
+/**
+ * Works out what `raterUid` can rate for a session. Nobody rates their own
+ * work: the chef can rate the hired cook's dishes but not their own duty, and
+ * in a household without a hired cook the chef cooked, so they rate nothing.
+ * Skipped meals aren't rated, and nothing is rated when no dish was planned.
+ */
+export function ratingTargets({
+    session,
+    dishNames,
+    attendance,
+    chefUid,
+    hiredCookUids,
+    raterUid,
+}: {
+    session: RatingSession;
+    dishNames: Partial<Record<MealSlot, string>>;
+    attendance: Attendance;
+    chefUid: string | null;
+    hiredCookUids: string[];
+    raterUid: string;
+}): RatingTargets {
+    const dishes = SESSION_SLOTS[session]
+        .map(slot => ({ slot, name: (dishNames[slot] ?? '').trim() }))
+        .filter(d => d.name && attendedSlot(attendance, d.slot));
+    if (dishes.length === 0) return { dishes: [], cookUids: [], chefUid: null };
+
+    // A hired cook put on the rotation by mistake is still the cook, not a chef.
+    const chef = chefUid && !hiredCookUids.includes(chefUid) ? chefUid : null;
+    const cookUids = (hiredCookUids.length > 0 ? hiredCookUids : chef ? [chef] : []).filter(uid => uid !== raterUid);
+    return {
+        dishes: cookUids.length > 0 ? dishes : [],
+        cookUids,
+        chefUid: chef && chef !== raterUid ? chef : null,
+    };
+}
+
+export interface RatingInput {
+    dishes: { slot: MealSlot; stars: number }[];
+    chef: number | null;
+    cookNote: string;
+    chefNote: string;
+}
+
+/**
+ * Checks what the browser sent against what this member may rate. Every
+ * score is optional, but at least one must be given; notes go only to people
+ * who were rated.
+ */
+export function parseRatingInput(
+    input: { dishes?: unknown; chef?: unknown; cookNote?: unknown; chefNote?: unknown },
+    targets: RatingTargets,
+): RatingInput | null {
+    const allowed = new Set(targets.dishes.map(d => d.slot));
+    const dishes: RatingInput['dishes'] = [];
+    if (input.dishes !== undefined && input.dishes !== null) {
+        if (!Array.isArray(input.dishes) || input.dishes.length > 3) return null;
+        for (const d of input.dishes as { slot?: unknown; stars?: unknown }[]) {
+            if (!d || !isMealSlot(d.slot) || !allowed.has(d.slot) || !isStars(d.stars)) return null;
+            if (dishes.some(x => x.slot === d.slot)) return null;
+            dishes.push({ slot: d.slot, stars: d.stars });
+        }
+    }
+    let chef: number | null = null;
+    if (input.chef !== undefined && input.chef !== null) {
+        if (!targets.chefUid || !isStars(input.chef)) return null;
+        chef = input.chef;
+    }
+    if (dishes.length === 0 && chef === null) return null;
+    return {
+        dishes,
+        chef,
+        cookNote: dishes.length > 0 ? cleanComment(input.cookNote) : '',
+        chefNote: chef !== null ? cleanComment(input.chefNote) : '',
+    };
+}
+
+/** Running totals for an average and its 1–5 breakdown. Skipped ratings never reach these. */
+export interface ScoreTotals {
+    count: number;
+    sum: number;
+    /** hist[0] = number of 1-star ratings … hist[4] = 5-star. */
+    hist: number[];
+}
+
+export function emptyScore(): ScoreTotals {
+    return { count: 0, sum: 0, hist: [0, 0, 0, 0, 0] };
 }
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
-const hist = (v: unknown) => Array.from({ length: 5 }, (_, i) => num(Array.isArray(v) ? v[i] : 0));
 
 /** Read totals from a stored document defensively. */
-export function readTotals(data: unknown): RatingTotals {
+export function readScore(data: unknown): ScoreTotals {
     const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
     return {
         count: num(d.count),
-        foodSum: num(d.foodSum),
-        foodHist: hist(d.foodHist),
-        cookCount: num(d.cookCount),
-        cookSum: num(d.cookSum),
-        cookHist: hist(d.cookHist),
+        sum: num(d.sum),
+        hist: Array.from({ length: 5 }, (_, i) => num(Array.isArray(d.hist) ? d.hist[i] : 0)),
     };
 }
 
-export function addRating(totals: RatingTotals, food: number, cook: number | null): RatingTotals {
-    const foodHist = [...totals.foodHist];
-    foodHist[food - 1] += 1;
-    const cookHist = [...totals.cookHist];
-    if (cook !== null) cookHist[cook - 1] += 1;
-    return {
-        count: totals.count + 1,
-        foodSum: totals.foodSum + food,
-        foodHist,
-        cookCount: totals.cookCount + (cook !== null ? 1 : 0),
-        cookSum: totals.cookSum + (cook ?? 0),
-        cookHist,
-    };
+export function addScore(totals: ScoreTotals, ...stars: number[]): ScoreTotals {
+    const hist = [...totals.hist];
+    for (const s of stars) hist[s - 1] += 1;
+    return { count: totals.count + stars.length, sum: totals.sum + stars.reduce((a, b) => a + b, 0), hist };
 }
 
-export function mergeTotals(a: RatingTotals, b: RatingTotals): RatingTotals {
-    return {
-        count: a.count + b.count,
-        foodSum: a.foodSum + b.foodSum,
-        foodHist: a.foodHist.map((n, i) => n + b.foodHist[i]),
-        cookCount: a.cookCount + b.cookCount,
-        cookSum: a.cookSum + b.cookSum,
-        cookHist: a.cookHist.map((n, i) => n + b.cookHist[i]),
-    };
+export function mergeScores(a: ScoreTotals, b: ScoreTotals): ScoreTotals {
+    return { count: a.count + b.count, sum: a.sum + b.sum, hist: a.hist.map((n, i) => n + b.hist[i]) };
 }
 
 /** Average to one decimal place, or null when nothing was submitted (never counted as zero). */
@@ -190,24 +272,17 @@ export function average(sum: number, count: number): number | null {
     return count > 0 ? Math.round((sum / count) * 10) / 10 : null;
 }
 
-export function averages(t: RatingTotals): { food: number | null; cook: number | null } {
-    return { food: average(t.foodSum, t.count), cook: average(t.cookSum, t.cookCount) };
-}
+export const scoreAverage = (t: ScoreTotals) => average(t.sum, t.count);
 
 /** Weekly totals for the trend chart, keyed by the week's Monday. */
-export type WeeklyTotals = Record<string, { count: number; foodSum: number; cookCount: number; cookSum: number }>;
+export type WeeklyScores = Record<string, { count: number; sum: number }>;
 
-export function addToWeeks(weeks: WeeklyTotals, date: string, food: number, cook: number | null, keep: number = TREND_WEEKS): WeeklyTotals {
+export function addToWeeks(weeks: WeeklyScores, date: string, stars: number[], keep: number = TREND_WEEKS): WeeklyScores {
     const key = weekStart(date);
-    const prev = weeks[key] ?? { count: 0, foodSum: 0, cookCount: 0, cookSum: 0 };
-    const next: WeeklyTotals = {
+    const prev = weeks[key] ?? { count: 0, sum: 0 };
+    const next: WeeklyScores = {
         ...weeks,
-        [key]: {
-            count: prev.count + 1,
-            foodSum: prev.foodSum + food,
-            cookCount: prev.cookCount + (cook !== null ? 1 : 0),
-            cookSum: prev.cookSum + (cook ?? 0),
-        },
+        [key]: { count: prev.count + stars.length, sum: prev.sum + stars.reduce((a, b) => a + b, 0) },
     };
     const recent = Object.keys(next).sort().slice(-keep);
     return Object.fromEntries(recent.map(k => [k, next[k]]));
@@ -217,34 +292,53 @@ export interface TrendPoint {
     /** Monday of the week. */
     week: string;
     count: number;
-    food: number | null;
-    cook: number | null;
+    average: number | null;
 }
 
 /** The last `weeks` weeks up to the one containing `today`, oldest first; empty weeks have null averages. */
-export function trendSeries(weekly: WeeklyTotals, today: string, weeks: number = TREND_WEEKS): TrendPoint[] {
+export function trendSeries(weekly: WeeklyScores, today: string, weeks: number = TREND_WEEKS): TrendPoint[] {
     const current = weekStart(today);
     return Array.from({ length: weeks }, (_, i) => {
         const week = addDays(current, -7 * (weeks - 1 - i));
         const w = weekly[week];
-        return {
-            week,
-            count: w?.count ?? 0,
-            food: w ? average(w.foodSum, w.count) : null,
-            cook: w ? average(w.cookSum, w.cookCount) : null,
-        };
+        return { week, count: w?.count ?? 0, average: w ? average(w.sum, w.count) : null };
     });
 }
 
-/** A written comment as stored on a session summary. `by` is shown only when the household allows names. */
+/** A written note as stored on a session summary. `by` is shown only when the household allows names. */
 export interface StoredComment {
     text: string;
     by: string;
     at: number;
-    food: number;
-    cook: number | null;
+    /** The writer's score: their chef rating, or their dish rating when they rated one dish. */
+    stars: number | null;
 }
 
 export function addComment(list: StoredComment[], comment: StoredComment): StoredComment[] {
     return [...list, comment].slice(-MAX_COMMENTS_PER_SESSION);
+}
+
+/** Groups the same dish across sessions, whatever its capitalisation. */
+export const dishKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
+
+export interface DishAverage {
+    name: string;
+    average: number | null;
+    count: number;
+    /** Sessions the dish was served and rated in. */
+    times: number;
+}
+
+/** Each dish's average over the given sessions, best first; ties go to the dish rated more often. */
+export function dishAverages(entries: { name: string; count: number; sum: number }[]): DishAverage[] {
+    const byDish = new Map<string, { name: string; count: number; sum: number; times: number }>();
+    for (const e of entries) {
+        if (!e.name || e.count <= 0) continue;
+        const key = dishKey(e.name);
+        const prev = byDish.get(key) ?? { name: e.name.trim(), count: 0, sum: 0, times: 0 };
+        byDish.set(key, { name: prev.name, count: prev.count + e.count, sum: prev.sum + e.sum, times: prev.times + 1 });
+    }
+    return [...byDish.values()]
+        .map(d => ({ name: d.name, average: average(d.sum, d.count), count: d.count, times: d.times }))
+        .sort((a, b) => (b.average ?? 0) - (a.average ?? 0) || b.count - a.count || a.name.localeCompare(b.name));
 }

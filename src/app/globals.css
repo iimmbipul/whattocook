@@ -44,10 +44,10 @@
   --color-danger-soft: #fdf0ee;
 
   /* Ratings: filled stars (3.7:1 on white), and the two chart series
-     (validated for colour-blind separation: food = blue, cook = orange). */
+     (validated for colour-blind separation: dishes = blue, chef = orange). */
   --color-star: #b8770b;
-  --color-series-food: #2a78d6;
-  --color-series-cook: #eb6834;
+  --color-series-dish: #2a78d6;
+  --color-series-chef: #eb6834;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 

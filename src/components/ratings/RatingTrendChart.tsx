@@ -5,19 +5,27 @@ import { useLocale } from '@/context/LocaleContext';
 import { formatAverage, plural, shortDate } from '@/lib/ratings/client';
 import type { TrendPoint } from '@/lib/ratings/logic';
 
-const H = 188;
+const H = 168;
 const PAD = { left: 28, right: 12, top: 12, bottom: 28 };
-const FOOD = 'var(--color-series-food)';
-const COOK = 'var(--color-series-cook)';
-
-type Key = 'food' | 'cook';
 
 /**
- * Weekly average food and cook rating (1–5) as two lines. Weeks without
- * ratings leave a gap rather than dropping to zero. Hover or tap a week for
- * its values; the same numbers are available as a table.
+ * Weekly average rating (1–5) as one line. Weeks without ratings leave a gap
+ * rather than dropping to zero. Hover or tap a week for its values; the same
+ * numbers are available as a table.
  */
-export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
+export default function RatingTrendChart({
+    points,
+    color,
+    label,
+    ariaLabel,
+}: {
+    points: TrendPoint[];
+    /** A CSS colour, e.g. var(--color-series-dish). */
+    color: string;
+    /** What is averaged, e.g. "Dishes". */
+    label: string;
+    ariaLabel: string;
+}) {
     const { t, locale } = useLocale();
     const [active, setActive] = useState<number | null>(null);
     // Drawn at the container's real width, so labels stay 11px on phones and desktops alike.
@@ -36,35 +44,33 @@ export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
     const y = (v: number) => PAD.top + ((5 - v) / 4) * (H - PAD.top - PAD.bottom);
 
     /** Line segments that skip weeks with no value. */
-    const path = (key: Key) => {
-        let d = '';
-        let open = false;
-        points.forEach((p, i) => {
-            const v = p[key];
-            if (v === null) {
-                open = false;
-                return;
-            }
-            d += `${open ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
-            open = true;
-        });
-        return d;
-    };
+    let d = '';
+    let open = false;
+    points.forEach((p, i) => {
+        if (p.average === null) {
+            open = false;
+            return;
+        }
+        d += `${open ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.average).toFixed(1)}`;
+        open = true;
+    });
 
-    const latest = (key: Key) => [...points].reverse().find(p => p[key] !== null)?.[key] ?? null;
+    const latest = [...points].reverse().find(p => p.average !== null)?.average ?? null;
     const labelled = n > 0 ? [0, Math.floor((n - 1) / 2), n - 1] : [];
     const tip = active !== null ? points[active] : null;
 
     return (
         <div>
-            {/* Legend, carrying the latest values so identity never rests on colour alone. */}
-            <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink">
-                <LegendKey color={FOOD} label={t('ratings.food')} value={formatAverage(latest('food'))} />
-                <LegendKey color={COOK} label={t('ratings.cookUnnamed')} value={formatAverage(latest('cook'))} dashed />
-            </div>
+            {/* Legend, carrying the latest value so identity never rests on colour alone. */}
+            <p className="mb-2 inline-flex items-center gap-2 text-sm text-ink">
+                <svg width="22" height="10" aria-hidden="true">
+                    <line x1="1" x2="21" y1="5" y2="5" stroke={color} strokeWidth={2} strokeLinecap="round" />
+                </svg>
+                {t('ratings.my.latestWeek', { label })} <span className="font-semibold tabular-nums">{formatAverage(latest)}</span>
+            </p>
 
             <div ref={frame} className="relative" onMouseLeave={() => setActive(null)}>
-                <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block max-w-full" role="img" aria-label={t('ratings.my.trendAria')}>
+                <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block max-w-full" role="img" aria-label={ariaLabel}>
                     {[1, 2, 3, 4, 5].map(v => (
                         <g key={v}>
                             <line x1={PAD.left} x2={W - PAD.right} y1={y(v)} y2={y(v)} stroke="var(--color-line)" strokeWidth={1} />
@@ -81,14 +87,10 @@ export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
                         <line x1={x(active)} x2={x(active)} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--color-line-strong)" strokeWidth={1} />
                     )}
 
-                    <path d={path('food')} fill="none" stroke={FOOD} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-                    <path d={path('cook')} fill="none" stroke={COOK} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" strokeDasharray="6 4" />
-                    {points.map((p, i) => (
-                        <g key={p.week}>
-                            {p.food !== null && <circle cx={x(i)} cy={y(p.food)} r={4} fill={FOOD} stroke="var(--color-surface)" strokeWidth={2} />}
-                            {p.cook !== null && <circle cx={x(i)} cy={y(p.cook)} r={4} fill={COOK} stroke="var(--color-surface)" strokeWidth={2} />}
-                        </g>
-                    ))}
+                    <path d={d} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                    {points.map((p, i) =>
+                        p.average !== null ? <circle key={p.week} cx={x(i)} cy={y(p.average)} r={4} fill={color} stroke="var(--color-surface)" strokeWidth={2} /> : null,
+                    )}
 
                     {/* Hit targets: a full-height band per week, wider than the marks. */}
                     {points.map((p, i) => (
@@ -118,8 +120,7 @@ export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
                             <p className="mt-1 text-ink-muted">{t('ratings.my.noRatingsWeek')}</p>
                         ) : (
                             <>
-                                <p className="mt-1 text-ink">{t('ratings.food')}: <span className="font-semibold tabular-nums">{formatAverage(tip.food)}</span></p>
-                                <p className="text-ink">{t('ratings.cookUnnamed')}: <span className="font-semibold tabular-nums">{formatAverage(tip.cook)}</span></p>
+                                <p className="mt-1 text-ink">{label}: <span className="font-semibold tabular-nums">{formatAverage(tip.average)}</span></p>
                                 <p className="mt-1 text-ink-muted">{plural(t, 'ratings.countRatings', tip.count)}</p>
                             </>
                         )}
@@ -133,8 +134,7 @@ export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
                     <thead className="text-xs text-ink-muted">
                         <tr>
                             <th className="py-1 font-medium">{t('ratings.my.week')}</th>
-                            <th className="py-1 font-medium">{t('ratings.food')}</th>
-                            <th className="py-1 font-medium">{t('ratings.cookUnnamed')}</th>
+                            <th className="py-1 font-medium">{t('ratings.my.averageColumn')}</th>
                             <th className="py-1 text-right font-medium">{t('ratings.my.ratingsColumn')}</th>
                         </tr>
                     </thead>
@@ -142,8 +142,7 @@ export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
                         {points.map(p => (
                             <tr key={p.week} className="border-t border-line">
                                 <td className="py-1">{shortDate(p.week, locale)}</td>
-                                <td className="py-1">{formatAverage(p.food)}</td>
-                                <td className="py-1">{formatAverage(p.cook)}</td>
+                                <td className="py-1">{formatAverage(p.average)}</td>
                                 <td className="py-1 text-right">{p.count}</td>
                             </tr>
                         ))}
@@ -151,16 +150,5 @@ export default function RatingTrendChart({ points }: { points: TrendPoint[] }) {
                 </table>
             </details>
         </div>
-    );
-}
-
-function LegendKey({ color, label, value, dashed = false }: { color: string; label: string; value: string; dashed?: boolean }) {
-    return (
-        <span className="inline-flex items-center gap-2">
-            <svg width="22" height="10" aria-hidden="true">
-                <line x1="1" x2="21" y1="5" y2="5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeDasharray={dashed ? '6 4' : undefined} />
-            </svg>
-            {label} <span className="font-semibold tabular-nums">{value}</span>
-        </span>
     );
 }
