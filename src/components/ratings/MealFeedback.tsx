@@ -5,16 +5,16 @@ import { useAuth } from '@/components/AuthProvider';
 import { loadRatingsStatus, updateCachedRatingsStatus } from '@/lib/ratings/client';
 import { markRatingFeedbackSeen } from '@/lib/ratings/actions';
 import type { RatingsStatus } from '@/lib/ratings/types';
-import CookFeedbackDialog from './CookFeedbackDialog';
 import MealRatingPrompt from './MealRatingPrompt';
+import RatingFeedbackDialog from './RatingFeedbackDialog';
 
 /** Wait for the page to settle before asking anything. */
 const START_DELAY_MS = 1200;
 
 /**
- * Mounted once in AppShell. Shows the cook a summary of new ratings, then
- * (separately, never at the same time) asks members to rate open sessions,
- * one at a time.
+ * Mounted once in AppShell. Shows cooks and chefs a summary of new ratings,
+ * then (separately, never at the same time) asks members to rate open
+ * sessions, one at a time.
  */
 export default function MealFeedback() {
     const { user } = useAuth();
@@ -43,13 +43,14 @@ export default function MealFeedback() {
     };
 
     if (status.feedback) {
-        const { upToMs } = status.feedback;
+        const { cook, chef } = status.feedback;
+        const upTo = { ...(cook ? { cook: cook.upToMs } : {}), ...(chef ? { chef: chef.upToMs } : {}) };
         return (
-            <CookFeedbackDialog
+            <RatingFeedbackDialog
                 feedback={status.feedback}
                 today={status.today}
                 onClose={() => {
-                    void markRatingFeedbackSeen(upToMs).catch(() => undefined);
+                    void markRatingFeedbackSeen(upTo).catch(() => undefined);
                     update(s => ({ ...s, feedback: null }));
                 }}
             />

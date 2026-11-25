@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/server/currentUser';
 import { getRatingsDashboard } from '@/lib/server/ratings';
 
-/** GET /api/ratings/summary → RatingsDashboard for the signed-in user's own cooking. */
+/** GET /api/ratings/summary → RatingsDashboard: the signed-in person's own ratings as cook and as chef. */
 export async function GET() {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

@@ -12,14 +12,17 @@
 
 import { getSessionUser } from '../server/currentUser';
 import { markFeedbackSeen, recordRating, setNamesVisible } from '../server/ratings';
-import type { RatingResult } from './types';
+import type { MealSlot } from './logic';
+import type { RatingResult, RatingRole } from './types';
 
+/** Dish ratings go to whoever cooked; the chef rating goes to the flatmate on duty. Every score is optional, but one is needed. */
 export async function submitMealRating(input: {
     date: string;
     session: string;
-    food: number;
-    cook?: number | null;
-    comment?: string;
+    dishes: { slot: MealSlot; stars: number }[];
+    chef?: number | null;
+    cookNote?: string;
+    chefNote?: string;
 }): Promise<RatingResult> {
     const user = await getSessionUser();
     if (!user) return { ok: false, error: 'auth' };
@@ -32,10 +35,10 @@ export async function skipMealRating(date: string, session: string): Promise<Rat
     return recordRating(user, { date, session }, 'skipped');
 }
 
-export async function markRatingFeedbackSeen(upToMs: number): Promise<boolean> {
+export async function markRatingFeedbackSeen(upTo: Partial<Record<RatingRole, number>>): Promise<boolean> {
     const user = await getSessionUser();
     if (!user) return false;
-    return markFeedbackSeen(user, upToMs);
+    return markFeedbackSeen(user, upTo);
 }
 
 /** Owner only: whether names are shown next to ratings and comments. */
