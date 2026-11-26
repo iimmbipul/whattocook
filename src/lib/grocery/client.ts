@@ -15,18 +15,24 @@ const TTL_MS = 30 * 1000;
 let cached: { uid: string; at: number; data: GroceryView } | null = null;
 let inflight: { uid: string; promise: Promise<GroceryView | null> } | null = null;
 const listeners = new Set<(view: GroceryView) => void>();
+// Requests are numbered so a slow, older response never replaces a newer one
+// (quick taps in the stock check start overlapping refreshes).
+let started = 0;
+let applied = 0;
 
 export function loadGroceryView(uid: string, { fresh = false }: { fresh?: boolean } = {}): Promise<GroceryView | null> {
     if (!fresh && cached && cached.uid === uid && Date.now() - cached.at < TTL_MS) return Promise.resolve(cached.data);
     if (!fresh && inflight?.uid === uid) return inflight.promise;
+    const ticket = ++started;
     const promise: Promise<GroceryView | null> = fetch('/api/grocery', { credentials: 'same-origin', cache: 'no-store' })
         .then(res => (res.ok ? (res.json() as Promise<GroceryView>) : null))
         .then(data => {
-            if (data) {
+            if (data && ticket > applied) {
+                applied = ticket;
                 cached = { uid, at: Date.now(), data };
                 listeners.forEach(l => l(data));
             }
-            return data;
+            return data && ticket < applied && cached ? cached.data : data;
         })
         .catch(() => null)
         .finally(() => {
@@ -70,6 +76,19 @@ export function groceryDayLabel(date: string, today: string, t: T, locale: strin
 /** The item's name in the viewer's language. */
 export function itemName(item: { en: string; hi?: string; or?: string }, locale: string): string {
     return localName(item, locale);
+}
+
+/** "today, 10:30", "yesterday, 18:05" or "24 Nov, 18:05": when an item was last marked. */
+export function markedAt(ms: number, t: T, locale: string): string {
+    const loc = INTL_LOCALE[locale] ?? 'en-IN';
+    const at = new Date(ms);
+    const time = new Intl.DateTimeFormat(loc, { hour: 'numeric', minute: '2-digit' }).format(at);
+    const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const now = new Date();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    if (dayKey(at) === dayKey(now)) return t('grocery.inventory.todayAt', { time });
+    if (dayKey(at) === dayKey(yesterday)) return t('grocery.inventory.yesterdayAt', { time });
+    return `${new Intl.DateTimeFormat(loc, { day: 'numeric', month: 'short' }).format(at)}, ${time}`;
 }
 
 /** "2 h ago", "yesterday" or a date, for when a level was reported. */

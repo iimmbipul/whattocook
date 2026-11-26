@@ -10,7 +10,9 @@ import { Card, EmptyState } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Field';
 import { Skeleton } from '@/components/ui/Spinner';
+import { Segmented } from '@/components/ui/Segmented';
 import { JarIcon } from '@/components/grocery/LevelPicker';
+import { GrocerySearch, InventoryList, useGroceryMarking } from '@/components/grocery/GroceryMarking';
 import { useGroceryView } from '@/components/grocery/useGroceryView';
 import { markGroceriesRestocked } from '@/lib/grocery/actions';
 import { groceryDayLabel, itemName, refreshGroceryView, reportedAgo } from '@/lib/grocery/client';
@@ -23,11 +25,16 @@ const GROUPS: { level: StockLevel; key: string }[] = [
     { level: 'half', key: 'getting' },
 ];
 
-/** Members' shopping list: what the cook reported out of stock or running low. */
+/**
+ * Groceries for everyone in the household: mark any item Out of stock or Full
+ * (or add one), the shopping list, and the full inventory with who marked what.
+ */
 export default function GroceriesPage() {
     const { user } = useAuth();
     const { t, locale } = useLocale();
     const view = useGroceryView(user?.uid);
+    const marking = useGroceryMarking(user?.uid ?? '');
+    const [tab, setTab] = useState<'list' | 'inventory'>('list');
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState('');
 
@@ -88,7 +95,23 @@ export default function GroceriesPage() {
                 </div>
             ) : !view ? (
                 <Alert tone="error">{t('grocery.loadFailed')}</Alert>
-            ) : view.list.length === 0 ? (
+            ) : (
+                <>
+                    <GrocerySearch view={view} marking={marking} />
+                    {marking.notice && <Alert tone={marking.notice.tone} className="mb-4">{marking.notice.text}</Alert>}
+                    <Segmented
+                        label={t('grocery.tabs.label')}
+                        value={tab}
+                        onChange={setTab}
+                        className="mb-4"
+                        options={[
+                            { value: 'list', label: t('grocery.tabs.toBuy', { count: view.list.length }) },
+                            { value: 'inventory', label: t('grocery.tabs.inventory', { count: view.pantry.filter(r => r.active).length }) },
+                        ]}
+                    />
+                    {tab === 'inventory' ? (
+                        <InventoryList view={view} marking={marking} />
+                    ) : view.list.length === 0 ? (
                 <Card>
                     <EmptyState
                         icon={<ShoppingBasket size={22} />}
@@ -149,6 +172,8 @@ export default function GroceriesPage() {
                         );
                     })}
                 </div>
+                    )}
+                </>
             )}
         </AppShell>
     );

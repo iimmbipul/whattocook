@@ -15,6 +15,7 @@ import { HouseholdMember, MealDocument } from '@/types/meal';
 import { getFormattedDate } from '@/lib/permissions';
 import MealCard from './MealCard';
 import GroceryToday from './grocery/GroceryToday';
+import CookMenuGate from './grocery/CookMenuGate';
 import { addDays, format, isSameDay } from 'date-fns';
 import { useLocale } from '@/context/LocaleContext';
 import {
@@ -268,7 +269,10 @@ export default function DashboardContent() {
 
             {isToday && <GroceryToday />}
 
-            {renderDayMeals(selectedMeal, dateString)}
+            {/* The hired cook finishes today's stock check before seeing the menu. */}
+            <CookMenuGate checkIsAbove={isToday} onShowCheck={() => setSelectedDate(new Date())}>
+                {renderDayMeals(selectedMeal, dateString)}
+            </CookMenuGate>
         </AppShell>
     );
 }

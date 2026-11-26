@@ -10,8 +10,10 @@
 import { getSessionUser } from '../server/currentUser';
 import { authorizeAppAdmin } from '../server/guards';
 import {
+    addItem,
     addNoteItems,
     changeCatalogItem,
+    markItem,
     parseGroceryNote,
     reportStock,
     restockItems,
@@ -20,9 +22,21 @@ import {
     setItemTracking,
     updateGrocerySettings,
 } from '../server/grocery';
-import type { GroceryResult, NoteItem } from './types';
+import type { GroceryResult, MarkedItem, NoteItem } from './types';
 
 const noSession = { ok: false, error: 'auth' } as const;
+
+/** Anyone in the household: mark an item Out of stock ('empty') or Full ('full'). */
+export async function markGroceryItem(itemId: string, level: string): Promise<GroceryResult<MarkedItem>> {
+    const user = await getSessionUser();
+    return user ? markItem(user, itemId, level) : noSession;
+}
+
+/** Anyone in the household: add an item that isn't listed yet, with its status. */
+export async function addGroceryItem(name: string, level: string): Promise<GroceryResult<MarkedItem>> {
+    const user = await getSessionUser();
+    return user ? addItem(user, name, level) : noSession;
+}
 
 /** Cook: how much of an item is left (full, half, quarter, empty). */
 export async function reportGroceryLevel(itemId: string, level: string): Promise<GroceryResult> {

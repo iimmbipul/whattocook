@@ -278,3 +278,82 @@ export function splitNote(text: string): string[] {
 
 export const MAX_NOTE_LENGTH = 120;
 export const MAX_ITEMS_PER_NOTE = 5;
+
+/* ─── Members: Out of stock / Full, and searching items by name ───────── */
+
+/** The two statuses any household member can set. */
+export type MemberLevel = 'empty' | 'full';
+
+export function isMemberLevel(value: unknown): value is MemberLevel {
+    return value === 'empty' || value === 'full';
+}
+
+export interface NamedItem {
+    id: string;
+    /** English, Hindi and Odia names plus other spellings. */
+    names: string[];
+}
+
+/**
+ * How well a typed query matches an item's names: 100 exact, 95 exact once a
+ * plural ending is dropped, 80 name starts with it, 60 a word starts with it,
+ * 40 contains it (3+ letters). 0 = no match.
+ */
+export function matchScore(names: string[], query: string): number {
+    const q = normalizeTerm(query);
+    if (!q) return 0;
+    const singular = q.replace(/(es|s)$/u, '');
+    const variants = singular && singular !== q ? [q, singular] : [q];
+    let best = 0;
+    for (const name of names) {
+        const n = normalizeTerm(name);
+        if (!n) continue;
+        for (const v of variants) {
+            if (n === v) best = Math.max(best, v === q ? 100 : 95);
+            else if (n.startsWith(v)) best = Math.max(best, 80);
+            else if (` ${n}`.includes(` ${v}`)) best = Math.max(best, 60);
+            else if (v.length >= 3 && n.includes(v)) best = Math.max(best, 40);
+        }
+    }
+    return best;
+}
+
+/** Items matching a typed query, best first (ties by first name). */
+export function searchItems<T extends NamedItem>(items: T[], query: string, limit = 8): T[] {
+    return items
+        .map(item => ({ item, score: matchScore(item.names, query) }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score || (a.item.names[0] ?? '').localeCompare(b.item.names[0] ?? ''))
+        .slice(0, Math.max(0, limit))
+        .map(x => x.item);
+}
+
+/** The item a typed name means exactly (same name, spelling or its plural), so a new one isn't added twice. */
+export function exactItem<T extends NamedItem>(items: T[], name: string): T | null {
+    let best: T | null = null;
+    let bestScore = 0;
+    for (const item of items) {
+        const s = matchScore(item.names, name);
+        if (s >= 95 && s > bestScore) {
+            best = item;
+            bestScore = s;
+        }
+    }
+    return best;
+}
+
+/**
+ * The cook's list is fixed once a day (so the daily limit holds and the list
+ * ends); what is still pending is the listed items that are tracked and have
+ * not been checked today by anyone.
+ */
+export function pendingChecks(
+    listed: string[],
+    items: Map<string, { active: boolean; lastCheckedDate: string | null }>,
+    today: string,
+): string[] {
+    return listed.filter(id => {
+        const item = items.get(id);
+        return !!item && item.active && item.lastCheckedDate !== today;
+    });
+}
