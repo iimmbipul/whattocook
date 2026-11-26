@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     addDays, applyPinnedInterval, applyReport, applyRestock, buildTermIndex, cleanSettings, dailyChecks,
     learnInterval, matchItem, newPantryState, parseLevelWords, splitNote,
+    exactItem, isMemberLevel, matchScore, pendingChecks, searchItems,
 } from '../src/lib/grocery/logic.ts';
 
 test('learning: shorter at once, longer halfway', () => {
@@ -116,4 +117,65 @@ test('typed notes in Hinglish, Hindi and Odia', () => {
     assert.equal(parseLevelWords('dhaniya patta'), null);
 
     assert.deepEqual(splitNote('pyaz khatam, aata aadha aur cheeni thoda'), ['pyaz khatam', 'aata aadha', 'cheeni thoda']);
+});
+
+const ITEMS = [
+    { id: 'onion', names: ['Onion', 'प्याज़', 'ପିଆଜ', 'pyaz', 'kanda', 'onions'] },
+    { id: 'green_chilli', names: ['Green chilli', 'हरी मिर्च', 'hari mirch', 'mirchi'] },
+    { id: 'tomato', names: ['Tomato', 'टमाटर', 'tamatar'] },
+    { id: 'custom-paneer', names: ['Paneer', 'पनीर'] },
+];
+
+test('members can only set Out of stock or Full', () => {
+    assert.equal(isMemberLevel('empty'), true);
+    assert.equal(isMemberLevel('full'), true);
+    assert.equal(isMemberLevel('half'), false);
+    assert.equal(isMemberLevel('quarter'), false);
+    assert.equal(isMemberLevel(undefined), false);
+});
+
+test('search: exact, prefix, word prefix and substring, any language or spelling', () => {
+    assert.equal(matchScore(['Onion'], 'onion'), 100);
+    assert.equal(matchScore(['Tomato'], 'tomatoes'), 95); // plural dropped
+    assert.equal(matchScore(['Onion'], 'oni'), 80);
+    assert.equal(matchScore(['Green chilli'], 'chil'), 60);
+    assert.equal(matchScore(['Paneer'], 'nee'), 40);
+    assert.equal(matchScore(['Paneer'], 'ne'), 0); // substrings need 3+ letters
+    assert.deepEqual(searchItems(ITEMS, 'pyaz').map(i => i.id), ['onion']);
+    assert.deepEqual(searchItems(ITEMS, 'प्याज़').map(i => i.id), ['onion']);
+    assert.deepEqual(searchItems(ITEMS, 'mir').map(i => i.id), ['green_chilli']);
+    assert.deepEqual(searchItems(ITEMS, 'xyz'), []);
+    assert.equal(searchItems(ITEMS, 'a', 2).length <= 2, true);
+});
+
+test('adding a name that already exists marks that item instead of a duplicate', () => {
+    assert.equal(exactItem(ITEMS, 'Onions')?.id, 'onion');
+    assert.equal(exactItem(ITEMS, '  PYAZ ')?.id, 'onion');
+    assert.equal(exactItem(ITEMS, 'paneer')?.id, 'custom-paneer');
+    assert.equal(exactItem(ITEMS, 'oni'), null); // a prefix is not the same item
+    assert.equal(exactItem(ITEMS, 'Mushroom'), null);
+});
+
+test('the daily stock-check list is fixed; items checked today by anyone drop off', () => {
+    const today = '2026-11-26';
+    const items = new Map([
+        ['onion', { active: true, lastCheckedDate: today }], // member marked it this morning
+        ['rice', { active: true, lastCheckedDate: '2026-11-20' }],
+        ['salt', { active: false, lastCheckedDate: null }], // no longer tracked
+        ['milk', { active: true, lastCheckedDate: null }],
+    ]);
+    assert.deepEqual(pendingChecks(['onion', 'rice', 'salt', 'milk', 'gone'], items, today), ['rice', 'milk']);
+    assert.deepEqual(pendingChecks([], items, today), []);
+});
+
+test('a member marking Out of stock follows the same rules as the cook', () => {
+    const day = n => addDays('2026-11-20', n);
+    const s = applyRestock(newPantryState(5, day(0)), day(0));
+    const r = applyReport(s, 'empty', day(3)); // ran out after 3 days
+    assert.equal(r.state.level, 'empty');
+    assert.equal(r.state.intervalDays, 3);
+    assert.equal(r.state.lastCheckedDate, day(3));
+    const full = applyReport(r.state, 'full', day(4)); // marked Full: a new cycle starts
+    assert.equal(full.state.lastRestockDate, day(4));
+    assert.equal(full.state.nextCheckDate, day(7));
 });

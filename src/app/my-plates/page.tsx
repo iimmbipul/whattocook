@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Segmented';
 import { Skeleton } from '@/components/ui/Spinner';
 import MealImage, { MealPhotoCredits } from '@/components/MealImage';
+import CookMenuGate from '@/components/grocery/CookMenuGate';
 
 type Entry = { date: string; mealType: string; meal: MealItem };
 type MealFilter = 'All' | 'Breakfast' | 'Lunch' | 'Dinner';
@@ -109,6 +110,7 @@ export default function MyPlatesPage() {
                 />
             </div>
 
+            <CookMenuGate>
             {isLoading ? (
                 <div className="space-y-4" aria-busy="true" aria-label={t('common.loading')}>
                     {[0, 1, 2].map(i => (
@@ -187,6 +189,7 @@ export default function MyPlatesPage() {
                     )}
                 </>
             )}
+            </CookMenuGate>
         </AppShell>
     );
 }

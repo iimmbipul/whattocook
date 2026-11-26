@@ -442,7 +442,7 @@
         },
         "list": {
             "title": "Groceries",
-            "subtitle": "What the cook says is running low or out of stock.",
+            "subtitle": "Mark what’s out of stock or full, and see what to buy.",
             "share": "Share",
             "shareTitle": "Groceries to buy",
             "doCheck": "Do today’s stock check",
@@ -451,7 +451,7 @@
             "getting": "Getting low",
             "emptyTitle": "Nothing to buy",
             "emptyBody": "Everything was in stock at the last check ({{day}}).",
-            "emptyNever": "Once the cook checks the stock, items that are low or out show here.",
+            "emptyNever": "When someone marks an item out of stock, or the cook checks the stock, it shows here.",
             "lastChecked": "Last stock check: {{day}}.",
             "reportedBy": "Reported by {{name}} · {{when}}",
             "bought": "Bought",
@@ -523,6 +523,45 @@
             "fieldInterval": "Default interval (days)",
             "fieldAliases": "Other spellings",
             "fieldAliasesHint": "Comma-separated, e.g. pyaz, kanda"
+        },
+        "tabs": {
+            "label": "Groceries view",
+            "toBuy": "To buy ({{count}})",
+            "inventory": "Inventory ({{count}})"
+        },
+        "mark": {
+            "title": "Mark an item",
+            "hint": "Search, then mark it out of stock or full. Not listed? Type its name to add it.",
+            "placeholder": "Search, e.g. onion, atta, milk",
+            "out": "Out of stock",
+            "full": "Full",
+            "outAria": "Mark {{name}} out of stock",
+            "fullAria": "Mark {{name}} full",
+            "add": "Add “{{name}}”",
+            "addHint": "New item: it joins your household’s list.",
+            "notTracked": "not on your list yet",
+            "tooShort": "Type at least 2 letters.",
+            "markedOut": "{{name}} marked out of stock.",
+            "markedFull": "{{name}} marked full.",
+            "addedOut": "Added {{name}} and marked it out of stock.",
+            "addedFull": "Added {{name}} and marked it full.",
+            "failed": "Couldn’t update {{name}}. Please try again."
+        },
+        "inventory": {
+            "markedBy": "Marked {{when}} by {{name}}",
+            "marked": "Marked {{when}}",
+            "byCook": "{{name}} (cook)",
+            "neverMarked": "Not marked yet",
+            "todayAt": "today, {{time}}",
+            "yesterdayAt": "yesterday, {{time}}",
+            "emptyTitle": "Nothing tracked yet",
+            "emptyBody": "Search above to mark an item. Items also appear after the cook’s stock check."
+        },
+        "gate": {
+            "title": "Stock check first",
+            "body": "Finish today’s stock check to see the menu. {{count}} left.",
+            "bodyAbove": "Finish the stock check above to see the menu. {{count}} left.",
+            "open": "Go to today’s stock check"
         }
     }
 }

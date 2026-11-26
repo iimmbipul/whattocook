@@ -18,10 +18,12 @@ import * as G from '../grocery/logic';
 import type {
     CatalogRow,
     GroceryAdminView,
+    GroceryError,
     GroceryResult,
     GroceryRow,
     GroceryView,
     IntervalChangeInfo,
+    MarkedItem,
     NoteItem,
 } from '../grocery/types';
 
@@ -36,10 +38,13 @@ import type {
  *   households/{hid}/pantry/{itemId}/events   History: report, bought, arrived,
  *                                             interval pinned or unpinned.
  *   households/{hid}/settings/grocery         Look-ahead days, daily limit, learning.
+ *   households/{hid}/grocery_checks/{date}    The day's stock-check list, fixed when first
+ *                                             built so the daily limit holds and it ends.
  *
  * Only the server reads and writes these (security rules deny the browser).
- * Stock levels are reported by the hired cook, or by the owner of a household
- * that has no hired cook. Anyone in the household can mark items bought.
+ * The hired cook (or the owner of a household with no cook) reports all four
+ * levels in the daily stock check. Anyone in the household can mark an item
+ * Out of stock or Full, add an item that isn't listed yet, and mark items bought.
  */
 
 type Fs = ReturnType<typeof adminFirestore>;
@@ -48,6 +53,7 @@ const CATALOG_COLLECTION = 'grocery_catalog';
 const DISH_CACHE_COLLECTION = 'dish_ingredients';
 const pantryPath = (hid: string) => `households/${hid}/pantry`;
 const settingsPath = (hid: string) => `households/${hid}/settings/grocery`;
+const checkDayPath = (hid: string, date: string) => `households/${hid}/grocery_checks/${date}`;
 
 const OUT_OF_STOCK_MERGE_MS = 30 * 60 * 1000;
 const MAX_NAME = 40;
@@ -117,9 +123,13 @@ interface PantryRecord {
     state: G.PantryState;
     levelAtMs: number | null;
     reportedByName: string | null;
+    reportedByRole: GroceryRow['reportedByRole'];
     lastChange: IntervalChangeInfo | null;
     virtual: boolean;
 }
+
+type Role = NonNullable<GroceryRow['reportedByRole']>;
+const isRole = (v: unknown): v is Role => v === 'user' || v === 'member' || v === 'cook';
 
 const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -145,6 +155,7 @@ function readPantry(id: string, data: DocumentData, today: string): PantryRecord
         },
         levelAtMs: typeof data.levelAtMs === 'number' ? data.levelAtMs : null,
         reportedByName: cleanText(data.reportedByName, 80) || null,
+        reportedByRole: isRole(data.reportedByRole) ? data.reportedByRole : null,
         lastChange: change && typeof change.from === 'number' && typeof change.to === 'number' && isDate(change.date)
             ? { from: change.from, to: change.to, observedDays: Number(change.observedDays) || 0, date: change.date }
             : null,
@@ -163,6 +174,7 @@ function recordFromCatalog(item: CatalogItem, today: string): PantryRecord {
         state: G.newPantryState(item.intervalDays, today),
         levelAtMs: null,
         reportedByName: null,
+        reportedByRole: null,
         lastChange: null,
         virtual: true,
     };
@@ -185,6 +197,7 @@ function toDoc(rec: PantryRecord, nowMs: number): DocumentData {
         lowReportedThisCycle: rec.state.lowReportedThisCycle,
         levelAtMs: rec.levelAtMs,
         reportedByName: rec.reportedByName,
+        reportedByRole: rec.reportedByRole,
         lastChange: rec.lastChange,
         updatedAtMs: nowMs,
     };
@@ -200,6 +213,7 @@ function toRow(rec: PantryRecord, needed?: { date: string; dishes: string[] }): 
         level: rec.state.level,
         levelAtMs: rec.levelAtMs,
         reportedByName: rec.reportedByName,
+        reportedByRole: rec.reportedByRole,
         neededOn: needed?.date ?? null,
         dishes: needed?.dishes ?? [],
         intervalDays: rec.state.intervalDays,
@@ -403,8 +417,9 @@ export async function getGroceryView(user: User, now: Date = new Date()): Promis
             neededOn: needed.get(r.id)?.date ?? null,
             intervalDays: r.state.intervalDays,
         }));
-        checks = G.dailyChecks(candidates, today, settings.dailyCheckCap)
-            .map(id => toRow(records.get(id)!, needed.get(id)));
+        const listed = await todaysCheckList(fs, hid, today, () => G.dailyChecks(candidates, today, settings.dailyCheckCap));
+        const status = new Map([...records].map(([id, r]) => [id, { active: r.active, lastCheckedDate: r.state.lastCheckedDate }]));
+        checks = G.pendingChecks(listed, status, today).map(id => toRow(records.get(id)!, needed.get(id)));
     }
 
     const saved = [...records.values()].filter(r => !r.virtual);
@@ -412,13 +427,36 @@ export async function getGroceryView(user: User, now: Date = new Date()): Promis
         .filter(r => r.active && (G.LIST_LEVELS as readonly string[]).includes(r.state.level))
         .map(r => toRow(r, needed.get(r.id)))
         .sort(byUrgency);
-    const pantry = canCheck ? saved.map(r => toRow(r, needed.get(r.id))).sort(byCategoryThenName) : [];
+    const pantry = saved.map(r => toRow(r, needed.get(r.id))).sort(byCategoryThenName);
     const lastCheckDate = saved.reduce<string | null>((max, r) => {
         const d = r.state.lastCheckedDate;
         return d && (!max || d > max) ? d : max;
     }, null);
+    const catalogEntries = [...catalog.items.values()].map(i => ({ id: i.id, en: i.en, hi: i.hi, or: i.or, category: i.category, aliases: i.aliases }));
 
-    return { today, canCheck, settings, checks, list, pantry, lastCheckDate };
+    return { today, canCheck, settings, checks, list, pantry, catalog: catalogEntries, lastCheckDate };
+}
+
+/**
+ * The day's stock-check list, built once and saved, so the daily limit holds
+ * (checking items doesn't pull in the next batch) and the cook's list ends.
+ * Items checked by anyone today drop off it.
+ */
+async function todaysCheckList(fs: Fs, hid: string, today: string, pick: () => string[]): Promise<string[]> {
+    const ref = fs.doc(checkDayPath(hid, today));
+    try {
+        return await fs.runTransaction(async tx => {
+            const snap = await tx.get(ref);
+            const saved = snap.exists ? snap.data()?.items : undefined;
+            if (Array.isArray(saved)) return saved.filter(isSafeDocId);
+            const items = pick();
+            tx.set(ref, { items, createdAtMs: Date.now() });
+            return items;
+        });
+    } catch (err) {
+        console.error('[grocery] daily check list failed:', err);
+        return pick();
+    }
 }
 
 /* ─── Cook: reports, notes ───────────────────────────────────────────── */
@@ -457,22 +495,31 @@ async function notifyOutOfStock(fs: Fs, user: User, names: string[], nowMs: numb
     }
 }
 
-/** The cook reports how much of an item is left (from the daily check or the Pantry page). */
-export async function reportStock(user: User, itemId: unknown, level: unknown, now: Date = new Date()): Promise<GroceryResult> {
-    if (!validUser(user) || !isSafeDocId(itemId) || !G.isStockLevel(level)) return { ok: false, error: 'invalid' };
+/**
+ * Record a level for one item, by anyone allowed to: the same rules as the
+ * cook's check (shopping list, next check, learning from run-outs), the item
+ * is tracked again if it was not, and a new item joins the household pantry.
+ * Empty sends the out-of-stock notification.
+ */
+async function recordLevel(
+    user: User,
+    itemId: string,
+    level: G.StockLevel,
+    now: Date,
+    newItem?: PantryRecord,
+): Promise<{ ok: true; item: MarkedItem } | { ok: false; error: GroceryError }> {
     const fs = adminFirestore();
-    if (!(await canCheckStock(fs, user))) return { ok: false, error: 'forbidden' };
     const [settings, catalog] = await Promise.all([readSettings(fs, user.householdId), loadCatalog(fs)]);
     const today = localTime(now).date;
     const nowMs = now.getTime();
     const ref = fs.doc(`${pantryPath(user.householdId)}/${itemId}`);
-    let emptyName: string | null = null;
+    let item: MarkedItem | null = null;
     try {
         await fs.runTransaction(async tx => {
             const snap = await tx.get(ref);
             const catalogItem = catalog.items.get(itemId);
-            if (!snap.exists && !catalogItem) throw new GroceryNotFound();
-            const rec = snap.exists ? readPantry(itemId, snap.data()!, today) : recordFromCatalog(catalogItem!, today);
+            if (!snap.exists && !catalogItem && !newItem) throw new GroceryNotFound();
+            const rec = snap.exists ? readPantry(itemId, snap.data()!, today) : catalogItem ? recordFromCatalog(catalogItem, today) : newItem!;
             const { state, change } = G.applyReport(rec.state, level, today, settings.learning);
             const updated: PantryRecord = {
                 ...rec,
@@ -481,19 +528,129 @@ export async function reportStock(user: User, itemId: unknown, level: unknown, n
                 virtual: false,
                 levelAtMs: nowMs,
                 reportedByName: actorName(user) || null,
+                reportedByRole: user.role,
                 lastChange: change ? { ...change, date: today } : rec.lastChange,
             };
-            tx.set(ref, { ...toDoc(updated, nowMs), ...(snap.exists ? {} : { createdAtMs: nowMs, addedBy: user.uid }) });
-            tx.set(ref.collection('events').doc(), { type: 'report', level, by: user.uid, at: nowMs, date: today, change: change ?? null });
-            if (level === 'empty') emptyName = updated.en;
+            tx.set(ref, { ...toDoc(updated, nowMs), ...(snap.exists ? {} : { createdAtMs: nowMs, addedBy: user.uid }) }, { merge: true });
+            tx.set(ref.collection('events').doc(), {
+                type: snap.exists ? 'report' : 'add',
+                level,
+                by: user.uid,
+                byName: actorName(user) || null,
+                role: user.role,
+                at: nowMs,
+                date: today,
+                change: change ?? null,
+            });
+            item = { itemId, en: updated.en, hi: updated.hi, or: updated.or, isNew: !snap.exists };
         });
     } catch (err) {
         if (err instanceof GroceryNotFound) return { ok: false, error: 'not-found' };
-        console.error('[grocery] reportStock failed:', err);
+        console.error('[grocery] recordLevel failed:', err);
         return { ok: false, error: 'failed' };
     }
-    if (emptyName) await notifyOutOfStock(fs, user, [emptyName], nowMs);
-    return { ok: true };
+    const marked = item as MarkedItem | null;
+    if (!marked) return { ok: false, error: 'failed' };
+    if (level === 'empty') await notifyOutOfStock(fs, user, [marked.en], nowMs);
+    return { ok: true, item: marked };
+}
+
+/** The cook reports how much of an item is left (from the daily check or the Pantry page). */
+export async function reportStock(user: User, itemId: unknown, level: unknown, now: Date = new Date()): Promise<GroceryResult> {
+    if (!validUser(user) || !isSafeDocId(itemId) || !G.isStockLevel(level)) return { ok: false, error: 'invalid' };
+    if (!(await canCheckStock(adminFirestore(), user))) return { ok: false, error: 'forbidden' };
+    const result = await recordLevel(user, itemId, level, now);
+    return result.ok ? { ok: true } : result;
+}
+
+/** Anyone in the household marks a listed item Out of stock or Full. */
+export async function markItem(user: User, itemId: unknown, level: unknown, now: Date = new Date()): Promise<GroceryResult<MarkedItem>> {
+    if (!validUser(user) || !isRole(user.role) || !isSafeDocId(itemId) || !G.isMemberLevel(level)) return { ok: false, error: 'invalid' };
+    const result = await recordLevel(user, itemId, level, now);
+    return result.ok ? { ok: true, data: result.item } : result;
+}
+
+const newItemSchema = z.object({
+    catalog_id: z.string(),
+    name_en: z.string(),
+    name_hi: z.string(),
+    name_or: z.string(),
+    category: z.enum(CATEGORIES),
+    interval_days: z.number(),
+});
+
+/** Names for an item someone typed: English, Hindi and Odia, its category and check interval. */
+async function nameNewItem(typed: string, catalog: LoadedCatalog): Promise<{ catalogId: string | null; en: string; hi: string; or: string; category: Category; intervalDays: number }> {
+    const fallback = { catalogId: null, en: typed.charAt(0).toUpperCase() + typed.slice(1), hi: '', or: '', category: 'other' as Category, intervalDays: 7 };
+    if (!hasAnyAiProvider()) return fallback;
+    try {
+        const ai = await runWithFallback('grocery item name', async ({ model, maxRetries }) => {
+            const { output } = await generateText({
+                model,
+                maxRetries,
+                output: Output.object({ schema: newItemSchema, name: 'grocery_item' }),
+                system: `Someone in an Indian home typed the name of a grocery or household supply item, in Hindi, Odia, English or a mix.
+- catalog_id: the id from the catalogue below if it is the same item, otherwise "".
+- name_en: its plain English name (at most 4 words, first letter capital).
+- name_hi: its name in Hindi (Devanagari). name_or: its name in Odia (Odia script).
+- category: one of ${CATEGORIES.join(', ')}.
+- interval_days: how often a household should check how much is left (1 to 30).
+Catalogue (id: name):
+${catalogList(catalog)}`,
+                prompt: `Item: ${typed}`,
+                temperature: 0.1,
+                providerOptions: generationProviderOptions,
+            });
+            return output;
+        });
+        // Keep the name people typed when it is in Latin script ("Makhana", not
+        // "Fox nuts"); AI's English name is used only when they typed Hindi or Odia.
+        const typedLatin = /^[\p{Script=Latin}\p{N}\s.'&()/-]+$/u.test(typed);
+        const en = typedLatin ? fallback.en : cleanText(ai.name_en, MAX_NAME);
+        if (!en) return fallback;
+        return {
+            catalogId: catalog.items.has(ai.catalog_id) ? ai.catalog_id : null,
+            en,
+            hi: cleanText(ai.name_hi, MAX_NAME),
+            or: cleanText(ai.name_or, MAX_NAME),
+            category: isCategory(ai.category) ? ai.category : 'other',
+            intervalDays: G.clampInterval(ai.interval_days),
+        };
+    } catch (err) {
+        console.error('[grocery] naming a new item failed:', err);
+        return fallback;
+    }
+}
+
+/**
+ * Anyone in the household adds an item by name with its status. If the name
+ * (or a spelling or plural of it) is already in the household or the
+ * catalogue, that item is marked instead of adding a duplicate.
+ */
+export async function addItem(user: User, name: unknown, level: unknown, now: Date = new Date()): Promise<GroceryResult<MarkedItem>> {
+    if (!validUser(user) || !isRole(user.role) || !G.isMemberLevel(level)) return { ok: false, error: 'invalid' };
+    const typed = cleanText(name, MAX_NAME);
+    if (typed.length < 2) return { ok: false, error: 'invalid' };
+    const fs = adminFirestore();
+    const today = localTime(now).date;
+    const [catalog, pantrySnap] = await Promise.all([loadCatalog(fs), fs.collection(pantryPath(user.householdId)).get()]);
+
+    const known: G.NamedItem[] = [
+        ...pantrySnap.docs.map(d => {
+            const r = readPantry(d.id, d.data(), today);
+            const c = catalog.items.get(d.id);
+            return { id: d.id, names: [r.en, r.hi, r.or, ...(c ? c.aliases : [])].filter(Boolean) };
+        }),
+        ...[...catalog.items.values()].map(i => ({ id: i.id, names: itemTerms(i) })),
+    ];
+    const existing = G.exactItem(known, typed);
+    const named = existing ? null : await nameNewItem(typed, catalog);
+    const itemId = existing?.id ?? named!.catalogId ?? customId(named!.en);
+    const newItem = named && !named.catalogId
+        ? recordFromCatalog({ id: itemId, en: named.en, hi: named.hi, or: named.or, category: named.category, intervalDays: named.intervalDays, aliases: [] }, today)
+        : undefined;
+    const result = await recordLevel(user, itemId, level, now, newItem);
+    return result.ok ? { ok: true, data: result.item } : result;
 }
 
 /** Bought (members, owner) or Groceries arrived (cook): the items are full again. */
@@ -520,9 +677,10 @@ export async function restockItems(user: User, itemIds: unknown, now: Date = new
                     virtual: false,
                     levelAtMs: nowMs,
                     reportedByName: actorName(user) || null,
+                    reportedByRole: isRole(user.role) ? user.role : null,
                 };
                 tx.set(refs[i], { ...toDoc(updated, nowMs), ...(snap.exists ? {} : { createdAtMs: nowMs, addedBy: user.uid }) });
-                tx.set(refs[i].collection('events').doc(), { type: user.role === 'cook' ? 'arrived' : 'bought', level: 'full', by: user.uid, at: nowMs, date: today });
+                tx.set(refs[i].collection('events').doc(), { type: user.role === 'cook' ? 'arrived' : 'bought', level: 'full', by: user.uid, byName: actorName(user) || null, role: user.role, at: nowMs, date: today });
             });
         });
         return { ok: true };
@@ -702,7 +860,7 @@ export async function addNoteItems(user: User, items: unknown, now: Date = new D
                 if (level) {
                     const applied = G.applyReport(rec.state, level, today, settings.learning);
                     change = applied.change;
-                    rec = { ...rec, state: applied.state, levelAtMs: nowMs, reportedByName: actorName(user) || null, lastChange: change ? { ...change, date: today } : rec.lastChange };
+                    rec = { ...rec, state: applied.state, levelAtMs: nowMs, reportedByName: actorName(user) || null, reportedByRole: user.role, lastChange: change ? { ...change, date: today } : rec.lastChange };
                     if (level === 'empty') emptyNames.push(rec.en);
                 }
                 tx.set(refs[i], { ...toDoc({ ...rec, active: true, virtual: false }, nowMs), ...(snap.exists ? {} : { createdAtMs: nowMs, addedBy: user.uid }) });
