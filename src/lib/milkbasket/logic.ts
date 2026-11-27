@@ -246,7 +246,24 @@ export type AddOutcome =
 
 const MAX_MESSAGE = 300;
 const AUTH_WORDS = /unauthori[sz]ed|unauthenticated|forbidden|invalid token|token expired|jwt|not logged in|login required|session expired/i;
-const TOKEN_HELP = 'Put a fresh token in MILKBASKET_TOKEN and redeploy.';
+const TOKEN_HELP = 'Paste a new refresh token in Admin → Milkbasket → Settings.';
+
+/** Milkbasket refused the login token. The server renews the login and tries once more. */
+export class MilkbasketAuthError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'MilkbasketAuthError';
+    }
+}
+
+export function isAuthError(err: unknown): boolean {
+    return err instanceof Error && err.name === 'MilkbasketAuthError';
+}
+
+/** The binaryversion header: the app version's first three parts (9.0.10.0 → 9.0.10). */
+export function binaryVersion(appVersion: string): string {
+    return appVersion.split('.').slice(0, 3).join('.');
+}
 
 function text(value: unknown): string {
     return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE) : '';
@@ -282,7 +299,8 @@ function graphqlErrors(body: Record<string, unknown>): { message: string; auth: 
  */
 export function parseAddResponse(httpStatus: number, body: unknown, productId?: number): AddOutcome {
     if (httpStatus === 401 || httpStatus === 403) {
-        return { ok: false, kind: 'auth', retryable: false, message: `Milkbasket didn't accept the login token (HTTP ${httpStatus}). ${TOKEN_HELP}` };
+        const detail = isObject(body) ? graphqlErrors(body)?.message ?? '' : '';
+        return { ok: false, kind: 'auth', retryable: false, message: `Milkbasket didn't accept the login token (HTTP ${httpStatus}${detail ? `: ${detail}` : ''}). ${TOKEN_HELP}` };
     }
     if (httpStatus >= 500) {
         const detail = isObject(body) ? graphqlErrors(body)?.message ?? '' : '';
@@ -382,15 +400,15 @@ export function tokenExpiry(token: string): number | null {
     }
 }
 
-/** The headers Milkbasket's web app sends. */
+/** The headers Milkbasket's web app sends (no Authorization when there is no login token yet). */
 export function milkbasketHeaders(deps: Pick<MilkbasketDeps, 'token' | 'cityId' | 'hubId' | 'appVersion'>): Record<string, string> {
     return {
         accept: '*/*',
         'content-type': 'application/json',
         appplatform: 'web',
         appversion: deps.appVersion,
-        binaryversion: deps.appVersion.split('.').slice(0, 3).join('.'),
-        authorization: `Bearer ${deps.token}`,
+        binaryversion: binaryVersion(deps.appVersion),
+        ...(deps.token ? { authorization: `Bearer ${deps.token}` } : {}),
         cityid: deps.cityId,
         hubid: deps.hubId,
         mbexpress: '0',
@@ -522,9 +540,12 @@ async function readQuery(deps: MilkbasketDeps, operationName: string, query: str
         const failure = networkFailure(err, timeoutMs);
         throw new Error(failure.ok ? 'Unknown error' : failure.kind === 'timeout' ? `Milkbasket didn't answer within ${Math.round(timeoutMs / 1000)} seconds.` : failure.message);
     }
-    if (res.status === 401 || res.status === 403) throw new Error(`Milkbasket didn't accept the login token (HTTP ${res.status}). ${TOKEN_HELP}`);
     const errors = isObject(res.body) ? graphqlErrors(res.body) : null;
-    if (errors) throw new Error(errors.auth ? `Milkbasket didn't accept the login token: ${errors.message}. ${TOKEN_HELP}` : `Milkbasket: ${errors.message}`);
+    if (res.status === 401 || res.status === 403) {
+        throw new MilkbasketAuthError(`Milkbasket didn't accept the login token (HTTP ${res.status}${errors ? `: ${errors.message}` : ''}). ${TOKEN_HELP}`);
+    }
+    if (errors?.auth) throw new MilkbasketAuthError(`Milkbasket didn't accept the login token: ${errors.message}. ${TOKEN_HELP}`);
+    if (errors) throw new Error(`Milkbasket: ${errors.message}`);
     if (res.status >= 400 || !isObject(res.body)) throw new Error(`Milkbasket error (HTTP ${res.status}).`);
     return res.body;
 }
@@ -723,4 +744,87 @@ export function parseBasket(body: unknown): BasketView | null {
 /** What is in the Milkbasket basket now (getExtendedBasket). Read-only. */
 export async function fetchBasket(deps: MilkbasketDeps): Promise<BasketView | null> {
     return parseBasket(await readQuery(deps, 'getExtendedBasket', GET_BASKET_QUERY, {}));
+}
+
+/* ─── Renewing the login (refreshAuthToken) ──────────────────────────── */
+
+export const REFRESH_QUERY = `query refreshAuthToken($appVersion: String!, $binaryVersion: String!, $source: String!, $refreshToken: String!) {
+  refreshAuthToken(
+    appVersion: $appVersion
+    binaryVersion: $binaryVersion
+    source: $source
+    refreshToken: $refreshToken
+  ) {
+    authKey
+    refreshKey
+    authExpiry
+    status
+    error
+    __typename
+  }
+}`;
+
+export type RefreshOutcome =
+    | {
+        ok: true;
+        /** The new login token. */
+        authKey: string;
+        /** The new refresh token (Milkbasket hands out a new one each time), or null to keep the old one. */
+        refreshKey: string | null;
+        /** How long the new login token lasts, in minutes (Milkbasket sends authExpiry 1440 = a day), if said. */
+        expiresInMinutes: number | null;
+    }
+    | { ok: false; kind: FailureKind; retryable: boolean; message: string };
+
+const SIGN_IN_AGAIN = 'Milkbasket needs a new sign-in: paste a new refresh token in Admin → Milkbasket → Settings.';
+
+/** Read Milkbasket's answer to refreshAuthToken. A refused refresh token means signing in again. */
+export function parseRefreshResponse(httpStatus: number, body: unknown): RefreshOutcome {
+    const errors = isObject(body) ? graphqlErrors(body) : null;
+    if (httpStatus === 401 || httpStatus === 403) {
+        return { ok: false, kind: 'auth', retryable: false, message: `${SIGN_IN_AGAIN} (HTTP ${httpStatus}${errors ? `: ${errors.message}` : ''})` };
+    }
+    if (httpStatus >= 500) {
+        return { ok: false, kind: 'server', retryable: true, message: `Milkbasket server error while renewing the login (HTTP ${httpStatus}).` };
+    }
+    if (!isObject(body)) {
+        return { ok: false, kind: 'unexpected', retryable: false, message: `Milkbasket sent an answer this app can't read while renewing the login (HTTP ${httpStatus}).` };
+    }
+    if (errors) {
+        return errors.auth
+            ? { ok: false, kind: 'auth', retryable: false, message: `${SIGN_IN_AGAIN} (${errors.message})` }
+            : { ok: false, kind: 'milkbasket', retryable: false, message: `Milkbasket couldn't renew the login: ${errors.message}` };
+    }
+    const data = isObject(body.data) ? body.data : null;
+    const result = data && isObject(data.refreshAuthToken) ? data.refreshAuthToken : null;
+    if (!result) return { ok: false, kind: 'unexpected', retryable: false, message: 'Milkbasket answered without new login tokens.' };
+    const error = errorText(result.error);
+    const authKey = cleanToken(typeof result.authKey === 'string' ? result.authKey : '');
+    if (error || !authKey) {
+        return { ok: false, kind: 'auth', retryable: false, message: `${SIGN_IN_AGAIN}${error ? ` (${error})` : ''}` };
+    }
+    const refreshKey = cleanToken(typeof result.refreshKey === 'string' ? result.refreshKey : '') || null;
+    const minutes = typeof result.authExpiry === 'number' && Number.isFinite(result.authExpiry) && result.authExpiry > 0 ? result.authExpiry : null;
+    return { ok: true, authKey, refreshKey, expiresInMinutes: minutes };
+}
+
+/**
+ * Ask Milkbasket for a new login token with the refresh token, as the website
+ * does (the current, possibly expired, login token is sent too when there is one).
+ */
+export async function refreshAuth(deps: MilkbasketDeps, refreshToken: string): Promise<RefreshOutcome> {
+    try {
+        const res = await graphql(deps, 'refreshAuthToken', REFRESH_QUERY, {
+            appVersion: deps.appVersion,
+            binaryVersion: binaryVersion(deps.appVersion),
+            source: 'web',
+            refreshToken,
+        });
+        return parseRefreshResponse(res.status, res.body);
+    } catch (err) {
+        const failure = networkFailure(err, deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+        return failure.ok
+            ? { ok: false, kind: 'unexpected', retryable: false, message: 'Unknown error' }
+            : { ...failure, message: failure.kind === 'timeout' ? 'Milkbasket didn’t answer while renewing the login.' : failure.message };
+    }
 }

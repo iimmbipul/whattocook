@@ -695,8 +695,10 @@
             "test": "Test connection",
             "testOk": "Connected to Milkbasket.",
             "connection": "Milkbasket API at {{host}}",
-            "tokenUntil": "login token valid until {{when}}",
-            "notConfigured": "Not set up on the server yet"
+            "notConfigured": "Not set up on the server yet",
+            "loginRenews": "login renews automatically",
+            "loginValid": "valid until {{when}}",
+            "loginRenewed": "renewed {{when}}"
         },
         "errors": {
             "auth": "Your session ended. Sign in again.",
@@ -712,8 +714,6 @@
             "milkbasket": "Milkbasket didn’t answer."
         },
         "notConfigured": "Milkbasket isn’t set up on the server yet. Add {{missing}} to the environment variables (in Vercel: Settings → Environment Variables) and redeploy.",
-        "tokenExpired": "The Milkbasket login token expired {{when}}. Put a fresh one in MILKBASKET_TOKEN and redeploy; until then nothing can be added.",
-        "tokenExpiring": "The Milkbasket login token expires {{when}}. Put a fresh one in MILKBASKET_TOKEN before then.",
         "member": {
             "tab": "Milkbasket",
             "approvalsTitle": "Milkbasket: waiting for an OK ({{count}})",
@@ -743,6 +743,23 @@
             "deliveryFee": "Delivery fee",
             "free": "Free",
             "payable": "To pay"
+        },
+        "noLogin": "No Milkbasket login is saved yet, so nothing can be added. Add one in Settings.",
+        "noRefresh": "The saved login has no refresh token, so it can’t renew itself and will stop working within a day. Add a refresh token in Settings.",
+        "addLogin": "Add login",
+        "loginError": "Milkbasket login problem, {{when}}: {{message}}",
+        "login": {
+            "title": "Milkbasket login",
+            "none": "No login saved.",
+            "saved_status": "A login is saved, encrypted. It renews itself with its refresh token; paste a new one here only if Milkbasket asks you to sign in again.",
+            "help": "Sign in on milkbasket.com in a private window. Press F12, open Network, reload, and find the refreshAuthToken request (or the sign-in response): copy refreshToken (and authorization, without “Bearer”). Then close the window without logging out. The app owns that login from now on: using it in a browser again would cancel it.",
+            "refreshToken": "Refresh token",
+            "refreshHint": "Required. Kept encrypted; never shown again.",
+            "authToken": "Login token (optional)",
+            "authHint": "The authorization value. Leave empty and the app gets one with the refresh token.",
+            "save": "Save login",
+            "saved": "Login saved, encrypted. It renews itself from now on.",
+            "invalid": "Paste the token as copied: letters, numbers and + / =, no spaces."
         }
     }
 }
