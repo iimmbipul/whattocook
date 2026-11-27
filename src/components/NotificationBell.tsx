@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo } from 'react';
-import { Bell, BellOff, ShoppingBasket, UserPlus, UserMinus, UserX, UserCheck, Utensils, Users } from 'lucide-react';
+import { Bell, BellOff, ShoppingBasket, ShoppingCart, UserPlus, UserMinus, UserX, UserCheck, Utensils, Users } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from './AuthProvider';
 import { useLocale } from '@/context/LocaleContext';
@@ -23,6 +23,7 @@ function TypeIcon({ type }: { type: NotificationDoc['type'] }) {
         case 'responsibility_bulk_changed':
             return <Users {...props} />;
         case 'grocery_out': return <ShoppingBasket {...props} />;
+        case 'milkbasket': return <ShoppingCart {...props} />;
         default: return <Bell {...props} />;
     }
 }
@@ -105,6 +106,10 @@ function useMessage() {
                     items: String(p.items ?? ''),
                 });
             }
+            case 'milkbasket': {
+                const kind = p.kind === 'added' ? 'milkbasketAdded' : p.kind === 'failed' ? 'milkbasketFailed' : 'milkbasketReview';
+                return t(`notifications.${kind}`, { items: String(p.items ?? '') });
+            }
             default:
                 return n.actorName;
         }
@@ -120,7 +125,7 @@ function formatMealDate(date: string): string {
 export default function NotificationBell() {
     const { user } = useAuth();
     const { t } = useLocale();
-    const { notifications, unreadCount } = useNotifications(user?.householdId, user?.uid);
+    const { notifications, unreadCount } = useNotifications(user?.householdId, user?.uid, user?.role);
     const {
         open: popoverOpen,
         toggle: togglePopover,

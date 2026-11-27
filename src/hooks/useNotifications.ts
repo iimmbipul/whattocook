@@ -13,7 +13,7 @@ const PAGE_SIZE = 50;
  * after the page has rendered instead of being part of the initial bundle of
  * every page that shows the bell.
  */
-export function useNotifications(householdId: string | undefined, currentUserId: string | undefined) {
+export function useNotifications(householdId: string | undefined, currentUserId: string | undefined, role?: string) {
     const [notifications, setNotifications] = useState<NotificationDoc[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
 
@@ -63,7 +63,9 @@ export function useNotifications(householdId: string | undefined, currentUserId:
                                     readBy: Array.isArray(raw.readBy) ? raw.readBy : [],
                                 } satisfies NotificationDoc;
                             })
-                            .filter(n => n.actorId !== currentUserId);
+                            .filter(n => n.actorId !== currentUserId)
+                            // Owner-only notifications (Milkbasket) are hidden from members and the cook.
+                            .filter(n => n.payload?.audience !== 'owner' || role === 'user');
 
                         setNotifications(docs);
                         setLoading(false);
@@ -83,7 +85,7 @@ export function useNotifications(householdId: string | undefined, currentUserId:
             cancelled = true;
             unsub?.();
         };
-    }, [householdId, currentUserId]);
+    }, [householdId, currentUserId, role]);
 
     const unreadCount = notifications.reduce(
         (n, doc) => n + (currentUserId && !doc.readBy.includes(currentUserId) ? 1 : 0),

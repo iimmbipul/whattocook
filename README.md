@@ -152,6 +152,56 @@ meal-planner/
 - Click "📞 Call" button on any meal card
 - Uses phone number from user's Firestore document
 
+## 🛒 Milkbasket auto-order
+
+When a pantry item drops to **Quarter** (low) or **Empty**, the app can add it to your Milkbasket basket. The app's server calls Milkbasket's GraphQL API (`consumerbff.milkbasket.com`) directly, with your login token, so it works on Vercel. The token is a server-only environment variable: it is only sent in the `Authorization` header to Milkbasket, and never stored in Firestore, logged or shown.
+
+### Setup
+
+1. Get your login details from the Milkbasket website. Sign in, open the browser's developer tools (F12), go to **Network**, and click any `graphql` request. Under **Request headers**, copy:
+   - `authorization`: the part after `Bearer `
+   - `cityid` and `hubid`
+2. Add them as environment variables. On Vercel, go to **Settings → Environment Variables**; for local runs, use `.env.local`. Never prefix these with `NEXT_PUBLIC_`.
+
+   ```env
+   MILKBASKET_TOKEN=eyJ...           # your login token, without "Bearer "
+   MILKBASKET_CITY_ID=1              # from the cityid header
+   MILKBASKET_HUB_ID=1               # from the hubid header
+   MB_HOUSEHOLD_IDS=owner_uid        # households allowed to use this account, comma-separated; Admin → Milkbasket shows yours
+   AUTO_ADD_PRICE_LIMIT=150          # optional; items priced below this (₹ per unit) are added without asking
+   MILKBASKET_APP_VERSION=9.0.10.0   # optional; change it if Milkbasket starts asking for a newer app version
+   ```
+
+3. Redeploy so the new variables take effect.
+4. Open **Admin → Milkbasket → Settings** and press **Test connection**. It reads your recent orders and changes nothing. Then turn **Auto-order** on; it starts off.
+
+**The token expires.** Admin → Milkbasket shows when it does, warns three days before, and shows a banner once it has expired or Milkbasket refuses it. Until you put a fresh token in `MILKBASKET_TOKEN` and redeploy, adds fail and nothing is marked bought.
+
+### Mapping items
+
+- **To map** lists pantry items with no Milkbasket product. Items that just ran low are at the top.
+- **Map** opens a form: product ID, name (as on Milkbasket), pack size, last known price and default quantity. **Show products from my orders** lists products from your recent orders, with name, size, price and product ID. Picking one fills the form. The list is cached for an hour; **Refresh** fetches it again.
+- After an item is mapped, its waiting request moves on: below the limit it is added, otherwise it waits in **Approvals**.
+- **Mappings** lists, edits and removes mappings, and turns auto-order on or off per item.
+
+### When an item runs low
+
+| Situation | Result |
+| --- | --- |
+| Auto-order off, or off for that item | Nothing |
+| The item has an open request, or was added in the last 24 hours (a setting) | Nothing |
+| Not mapped | `needs_mapping`: it shows in **To map** |
+| Price below the limit | Added in the background for tomorrow (a setting); the item is marked **Bought** |
+| Price at or above the limit (150 itself included), or unknown | `pending_approval`: **Approve** (the quantity can be changed) or **Reject** |
+| The item goes back to Full or Half first | Its approval or mapping request is cancelled |
+
+Failed adds show in **Activity** with Milkbasket's message and a **Retry** button.
+- Network errors and HTTP 5xx are retried up to 3 times. A timeout is not retried, because the item may already be in the basket.
+- Out of stock, past cutoff and price changes need you. Update the price in **Mappings**, then press **Retry**. If the new price is at or above the limit, the retry goes to approval.
+- Nothing is marked bought unless the add succeeded.
+
+Requests are never deleted: each is kept in `households/{hid}/purchase_requests` with its history. `npm test` covers the decisions, the requests sent and Milkbasket's answers with Milkbasket mocked; no test calls the real API. To try the whole flow locally without touching your account, point `MILKBASKET_API_URL` at a mock GraphQL server.
+
 ## 🛠️ Tech Stack
 
 - **Framework**: Next.js 15 (App Router)

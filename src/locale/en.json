@@ -215,7 +215,10 @@
         "guestRemoved": "{{actor}} removed a guest for {{mealType}} ({{mealName}})",
         "respChanged": "{{actor}} reassigned {{slot}} to {{toName}}",
         "respBulkChanged": "{{actor}} updated cooking duties on {{count}} days",
-        "groceryOut": "{{actor}} reported out of stock: {{items}}"
+        "groceryOut": "{{actor}} reported out of stock: {{items}}",
+        "milkbasketReview": "Milkbasket needs you: {{items}}",
+        "milkbasketAdded": "Added to Milkbasket: {{items}}",
+        "milkbasketFailed": "Milkbasket couldn’t add: {{items}}"
     },
     "common": {
         "close": "Close",
@@ -563,5 +566,152 @@
             "bodyAbove": "Finish the stock check above to see the menu. {{count}} left.",
             "open": "Go to today’s stock check"
         }
+    },
+    "milkbasket": {
+        "title": "Milkbasket",
+        "description": "Low or empty pantry items go to your Milkbasket basket automatically.",
+        "waiting": "{{count}} waiting",
+        "loadFailed": "Couldn’t load Milkbasket. Try again.",
+        "tabs": {
+            "label": "Milkbasket sections",
+            "approvals": "Approvals",
+            "map": "To map",
+            "mappings": "Mappings",
+            "activity": "Activity",
+            "settings": "Settings"
+        },
+        "notAllowed": {
+            "title": "Not set up for this household",
+            "body": "Auto-order uses one Milkbasket account, so only households listed in MB_HOUSEHOLD_IDS can use it. To use it here, add this household’s ID to MB_HOUSEHOLD_IDS in the server’s environment variables and redeploy.",
+            "householdId": "Household ID"
+        },
+        "off": "Auto-order is off: low or empty items aren’t added to the basket.",
+        "turnOn": "Turn on",
+        "problem": "Milkbasket problem, {{when}}: {{message}}",
+        "problemHint": "Nothing was marked bought. Fix it, then Test connection in Settings and Retry in Activity.",
+        "level": "{{from}} → {{to}}",
+        "approvals": {
+            "intro": "Items at or above your price limit, or with no known price. Approving adds them now and marks them bought.",
+            "empty": "Nothing waiting for approval.",
+            "quantity": "Quantity",
+            "price": "Price (₹)",
+            "total": "Total ₹{{total}}",
+            "approve": "Approve",
+            "reject": "Reject",
+            "added": "Added to the basket for {{date}}. {{item}} is marked bought.",
+            "queued": "Approved. It will be added in a moment.",
+            "failed": "Milkbasket didn’t add {{item}}: {{message}}",
+            "rejected": "Rejected."
+        },
+        "reason": {
+            "over-limit": "₹{{price}} is at or above your ₹{{limit}} limit",
+            "price-unknown": "Price unknown: enter it to approve",
+            "auto-off": "Auto-order was off",
+            "item-off": "Auto-order is off for this item",
+            "under-limit": "Below your ₹{{limit}} limit",
+            "unmapped": "Not mapped to a Milkbasket product",
+            "approved": "Approved"
+        },
+        "map": {
+            "intro": "Pantry items with no Milkbasket product. Items that just ran low are at the top: mapping one moves its request on.",
+            "waiting": "Ran low {{when}}: waiting for a product",
+            "map": "Map",
+            "dismiss": "Dismiss",
+            "empty": "Every pantry item is mapped.",
+            "notTracked": "not tracked",
+            "mapped": "Mapped {{item}}.",
+            "dismissed": "Dismissed."
+        },
+        "form": {
+            "title": "Map {{item}}",
+            "editTitle": "Edit {{item}}",
+            "productId": "Milkbasket product ID",
+            "productName": "Product name (as on Milkbasket)",
+            "size": "Pack size",
+            "price": "Price (₹, last known)",
+            "priceHint": "Leave empty if you don’t know it: requests then wait for approval.",
+            "quantity": "Default quantity",
+            "enabled": "Auto-order for this item",
+            "on": "On",
+            "off": "Off",
+            "invalid": "Check the product ID (a number), the name, the price, and a quantity from 1 to 20.",
+            "fromHistory": "Pick from my recent orders",
+            "loadHistory": "Show products from my orders",
+            "search": "Search name, size or product ID",
+            "refresh": "Refresh",
+            "fetched": "{{count}} products from {{orders}} orders · updated {{when}}",
+            "historyEmpty": "No products match.",
+            "historyFailed": "Couldn’t load your orders: {{message}}",
+            "lastOrdered": "last ordered {{date}}",
+            "use": "Use"
+        },
+        "mappings": {
+            "intro": "Which Milkbasket product each pantry item orders.",
+            "empty": "No items mapped yet. Map them from To map.",
+            "priceUnknown": "price unknown",
+            "priceFrom": "price from {{date}}",
+            "qty": "qty {{count}}",
+            "on": "Auto-order on",
+            "off": "Auto-order off",
+            "turnOn": "Turn on",
+            "turnOff": "Turn off",
+            "edit": "Edit",
+            "remove": "Remove",
+            "removeTitle": "Remove this mapping?",
+            "removeBody": "{{item}} will need a product again before it can be ordered. Past requests are kept.",
+            "removed": "Mapping removed."
+        },
+        "activity": {
+            "intro": "Recent requests, newest first. Nothing is deleted.",
+            "empty": "No requests yet.",
+            "retry": "Retry",
+            "delivery": "delivery {{date}}",
+            "by": "by {{name}}",
+            "retried": "Retrying."
+        },
+        "status": {
+            "needs_mapping": "Needs mapping",
+            "pending_approval": "Waiting for approval",
+            "queued": "Queued",
+            "adding": "Adding…",
+            "added": "Added",
+            "failed": "Failed",
+            "rejected": "Rejected",
+            "cancelled": "Cancelled"
+        },
+        "settings": {
+            "enabled": "Auto-order",
+            "on": "On",
+            "off": "Off",
+            "priceLimit": "Add automatically below (₹)",
+            "priceLimitHint": "Per unit. At or above this, items wait for approval. Default ₹{{limit}}.",
+            "delivery": "Delivery date",
+            "tomorrow": "Tomorrow",
+            "dayAfter": "Day after tomorrow",
+            "window": "Don’t add the same item again within (hours)",
+            "notify": "Bell notifications",
+            "saved": "Saved.",
+            "test": "Test connection",
+            "testOk": "Connected to Milkbasket.",
+            "connection": "Milkbasket API at {{host}}",
+            "tokenUntil": "login token valid until {{when}}",
+            "notConfigured": "Not set up on the server yet"
+        },
+        "errors": {
+            "auth": "Your session ended. Sign in again.",
+            "forbidden": "Only the owner can do this.",
+            "not-allowed": "This household isn’t set up for Milkbasket auto-order.",
+            "invalid": "Check the values and try again.",
+            "not-found": "That item or request no longer exists.",
+            "conflict": "This request has already moved on.",
+            "duplicate": "This item already has an open request or was added recently.",
+            "price-needed": "Enter the price to approve.",
+            "unmapped": "Map this item to a Milkbasket product first.",
+            "failed": "Something went wrong. Try again.",
+            "milkbasket": "Milkbasket didn’t answer."
+        },
+        "notConfigured": "Milkbasket isn’t set up on the server yet. Add {{missing}} to the environment variables (in Vercel: Settings → Environment Variables) and redeploy.",
+        "tokenExpired": "The Milkbasket login token expired {{when}}. Put a fresh one in MILKBASKET_TOKEN and redeploy; until then nothing can be added.",
+        "tokenExpiring": "The Milkbasket login token expires {{when}}. Put a fresh one in MILKBASKET_TOKEN before then."
     }
 }

@@ -106,7 +106,9 @@ export type NotificationType =
   | 'guest_removed'
   | 'responsibility_changed'
   | 'responsibility_bulk_changed'
-  | 'grocery_out';
+  | 'grocery_out'
+  /** Milkbasket auto-order (owner only): payload.kind is 'review', 'added' or 'failed'. */
+  | 'milkbasket';
 
 export interface NotificationDoc {
   id: string;
