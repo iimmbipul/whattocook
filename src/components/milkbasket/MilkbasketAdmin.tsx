@@ -23,9 +23,9 @@ import {
     setMilkbasketAutoOrder,
     testMilkbasketConnection,
 } from '@/lib/milkbasket/actions';
-import { MAX_QUANTITY, type HistoryProduct, type MilkbasketSettings } from '@/lib/milkbasket/logic';
+import { MAX_QUANTITY, type MilkbasketSettings } from '@/lib/milkbasket/logic';
 import type { MappingRow, MilkbasketAdminView, MilkbasketResult, PurchaseRequestRow } from '@/lib/milkbasket/types';
-import { ApprovalRow, LevelChange, OrderHistoryPicker, STATUS_TONE, errorText, rupees, type Done, type Notice } from './shared';
+import { ApprovalRow, LevelChange, ProductImage, ProductPicker, STATUS_TONE, errorText, rupees, type Done, type Notice, type PickedProduct } from './shared';
 
 type Tab = 'approvals' | 'map' | 'mappings' | 'activity' | 'settings';
 
@@ -290,12 +290,13 @@ function MappingDialog({
         price: c?.price !== null && c?.price !== undefined ? String(c.price) : '',
         quantity: String(c?.defaultQuantity ?? 1),
         enabled: c?.enabled ?? true,
+        imageUrl: c?.imageUrl ?? '',
     });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
-    const pick = (p: HistoryProduct) =>
-        setForm(f => ({ ...f, productId: String(p.productId), productName: p.name, size: p.size, price: p.price !== null ? String(p.price) : f.price }));
+    const pick = (p: PickedProduct) =>
+        setForm(f => ({ ...f, productId: String(p.productId), productName: p.name, size: p.size, price: p.price !== null ? String(p.price) : f.price, imageUrl: p.imageUrl }));
 
     const save = async () => {
         const productId = Number(form.productId);
@@ -315,6 +316,8 @@ function MappingDialog({
             price,
             defaultQuantity: quantity,
             enabled: form.enabled,
+            imageUrl: form.imageUrl, // cleared when a different product ID is typed
+
         }).catch(() => ({ ok: false as const, error: 'failed' as const }));
         setSaving(false);
         if (result.ok) await onSaved();
@@ -336,10 +339,16 @@ function MappingDialog({
             }
         >
             <div className="space-y-4">
-                <OrderHistoryPicker onPick={pick} />
+                <ProductPicker initialQuery={target.name} onPick={pick} />
+                {form.productName && (
+                    <div className="flex items-center gap-3">
+                        <ProductImage url={form.imageUrl} alt={form.productName} size={48} />
+                        <p className="text-sm font-medium text-ink">{form.productName}{form.size && <span className="font-normal text-ink-muted"> · {form.size}</span>}</p>
+                    </div>
+                )}
                 <div className="grid gap-3 sm:grid-cols-2">
                     <Field label={t('milkbasket.form.productId')} required>
-                        <TextInput inputMode="numeric" value={form.productId} onChange={e => setForm({ ...form, productId: e.target.value.replace(/[^\d]/g, '') })} />
+                        <TextInput inputMode="numeric" value={form.productId} onChange={e => setForm({ ...form, productId: e.target.value.replace(/[^\d]/g, ''), imageUrl: '' })} />
                     </Field>
                     <Field label={t('milkbasket.form.size')}>
                         <TextInput value={form.size} onChange={e => setForm({ ...form, size: e.target.value })} />
@@ -404,6 +413,7 @@ function Mappings({ view, onEdit, onDone }: { view: MilkbasketAdminView; onEdit:
             <ul className="divide-y divide-line rounded-xl border border-line">
                 {view.mappings.map(m => (
                     <li key={m.itemId} className="flex flex-wrap items-center gap-2 p-3">
+                        <ProductImage url={m.imageUrl} alt={m.productName} size={40} />
                         <div className="min-w-0 flex-1">
                             <p className="font-medium text-ink">
                                 {m.itemName} <span className="font-normal text-ink-muted">→ {m.productName}{m.size && ` · ${m.size}`}</span>
@@ -454,6 +464,7 @@ function Activity({ view, onDone }: { view: MilkbasketAdminView; onDone: Done })
             <ul className="max-h-[560px] divide-y divide-line overflow-y-auto rounded-xl border border-line">
                 {view.activity.map(req => (
                     <li key={req.id} className="flex flex-wrap items-start gap-2 p-3">
+                        <ProductImage url={req.imageUrl} alt={req.productName ?? req.itemName} size={40} />
                         <div className="min-w-0 flex-1">
                             <p className="font-medium text-ink">
                                 {req.itemName}

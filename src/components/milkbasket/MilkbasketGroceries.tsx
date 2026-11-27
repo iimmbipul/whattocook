@@ -11,10 +11,10 @@ import { Alert, Field, TextInput } from '@/components/ui/Field';
 import { Skeleton } from '@/components/ui/Spinner';
 import { groceryDayLabel, itemName, markedAt, refreshGroceryView, subscribeGroceryView } from '@/lib/grocery/client';
 import type { GroceryRow } from '@/lib/grocery/types';
-import { addToMilkbasket } from '@/lib/milkbasket/actions';
-import { MAX_QUANTITY, type HistoryProduct } from '@/lib/milkbasket/logic';
+import { addToMilkbasket, linkMilkbasketProduct } from '@/lib/milkbasket/actions';
+import { MAX_QUANTITY } from '@/lib/milkbasket/logic';
 import type { BasketResult, MilkbasketHouseholdView, MilkbasketItemState, PurchaseRequestRow } from '@/lib/milkbasket/types';
-import { ApprovalRow, OrderHistoryPicker, errorText, rupees, type Notice } from './shared';
+import { ApprovalRow, ProductImage, ProductPicker, errorText, rupees, type Notice, type PickedProduct } from './shared';
 
 /*
  * Milkbasket on the Groceries page, for the owner and members (not the cook):
@@ -169,38 +169,67 @@ function AddDialog({
 }) {
     const { t, locale } = useLocale();
     const mapped = state?.product ?? null;
-    const [picked, setPicked] = useState<HistoryProduct | null>(null);
+    const [picked, setPicked] = useState<PickedProduct | null>(null);
+    // Unlinked items start in the picker; linked ones show their product with "Change product".
+    const [choosing, setChoosing] = useState(!mapped);
     const [qty, setQty] = useState(String(mapped?.defaultQuantity ?? 1));
     const [price, setPrice] = useState('');
-    const [busy, setBusy] = useState(false);
+    const [busy, setBusy] = useState<'add' | 'link' | null>(null);
     const [error, setError] = useState('');
 
-    const product = mapped
-        ? { name: mapped.productName, size: mapped.size, price: mapped.price }
-        : picked
-            ? { name: picked.name, size: picked.size, price: picked.price }
+    const product = picked
+        ? { name: picked.name, size: picked.size, price: picked.price, imageUrl: picked.imageUrl }
+        : mapped
+            ? { name: mapped.productName, size: mapped.size, price: mapped.price, imageUrl: mapped.imageUrl }
             : null;
     const quantity = Number(qty);
     const qtyValid = Number.isInteger(quantity) && quantity >= 1 && quantity <= MAX_QUANTITY;
     const unitPrice = product?.price ?? (price.trim() ? Number(price) : NaN);
     const priceValid = Number.isFinite(unitPrice) && unitPrice > 0;
     const name = itemName(row, locale);
+    const pickedInput = picked ? { milkbasketProductId: picked.productId, productName: picked.name, size: picked.size, price: picked.price, imageUrl: picked.imageUrl } : null;
+
+    const pick = (p: PickedProduct) => {
+        setPicked(p);
+        setChoosing(false);
+        setError('');
+    };
 
     const submit = async () => {
-        setBusy(true);
+        setBusy('add');
         setError('');
         const result = await addToMilkbasket({
             itemId: row.itemId,
             quantity,
-            product: !mapped && picked ? { milkbasketProductId: picked.productId, productName: picked.name, size: picked.size, price: picked.price } : null,
+            product: pickedInput,
             price: product?.price === null ? unitPrice : null,
         }).catch(() => ({ ok: false as const, error: 'failed' as const }));
-        setBusy(false);
+        setBusy(null);
         if (!result.ok) {
             setError(errorText(result, t));
             return;
         }
+        if (result.data.status === 'failed') {
+            // e.g. out of stock or a changed price: stay open so another product can be picked.
+            setError(t('milkbasket.member.failedPickAnother', { message: result.data.errorMessage ?? '' }));
+            setChoosing(true);
+            setPicked(null);
+            return;
+        }
         await onDone(resultNotice(result.data, view.today, t, locale));
+    };
+
+    const saveLink = async () => {
+        if (!pickedInput) return;
+        setBusy('link');
+        setError('');
+        const result = await linkMilkbasketProduct(row.itemId, pickedInput).catch(() => ({ ok: false as const, error: 'failed' as const }));
+        setBusy(null);
+        if (!result.ok) {
+            setError(errorText(result, t));
+            return;
+        }
+        await onDone({ tone: 'success', text: t('milkbasket.member.linked', { item: name, product: pickedInput.productName }) });
     };
 
     return (
@@ -210,30 +239,39 @@ function AddDialog({
             title={t('milkbasket.member.dialogTitle', { name })}
             closeLabel={t('common.close')}
             footer={
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
                     <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
-                    <Button onClick={submit} loading={busy} disabled={!product || !qtyValid || !priceValid} leadingIcon={<ShoppingCart size={15} aria-hidden="true" />}>
+                    {picked && (
+                        <Button variant="secondary" onClick={saveLink} loading={busy === 'link'} disabled={busy !== null}>{t('milkbasket.member.saveLink')}</Button>
+                    )}
+                    <Button onClick={submit} loading={busy === 'add'} disabled={busy !== null || choosing || !product || !qtyValid || !priceValid} leadingIcon={<ShoppingCart size={15} aria-hidden="true" />}>
                         {t('milkbasket.member.confirm')}
                     </Button>
                 </div>
             }
         >
             <div className="space-y-4">
-                {!mapped && (
-                    <>
-                        <p className="text-sm text-ink-muted">{t('milkbasket.member.pickProduct')}</p>
-                        <OrderHistoryPicker onPick={setPicked} />
-                    </>
-                )}
-                {product && (
-                    <div className="rounded-xl bg-surface-muted p-3">
-                        <p className="font-semibold text-ink">{product.name}</p>
-                        <p className="text-sm text-ink-muted">
-                            {[product.size, t('milkbasket.member.forDate', { day: groceryDayLabel(view.deliveryDate, view.today, t, locale) })].filter(Boolean).join(' · ')}
-                        </p>
+                {product && !choosing && (
+                    <div className="flex items-center gap-3 rounded-xl bg-surface-muted p-3">
+                        <ProductImage url={product.imageUrl} alt={product.name} size={56} />
+                        <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-ink">{product.name}</p>
+                            <p className="text-sm text-ink-muted">
+                                {[product.size, t('milkbasket.member.forDate', { day: groceryDayLabel(view.deliveryDate, view.today, t, locale) })].filter(Boolean).join(' · ')}
+                            </p>
+                            {picked && mapped && <p className="mt-0.5 text-xs text-accent-strong">{t('milkbasket.member.willRelink', { item: name })}</p>}
+                        </div>
+                        <Button size="sm" variant="ghost" onClick={() => setChoosing(true)}>{t('milkbasket.member.change')}</Button>
                     </div>
                 )}
-                {product && (
+                {choosing && (
+                    <>
+                        <p className="text-sm text-ink-muted">{t(mapped ? 'milkbasket.member.pickOther' : 'milkbasket.member.pickProduct')}</p>
+                        <ProductPicker initialQuery={row.en} onPick={pick} />
+                        {product && <Button size="sm" variant="ghost" onClick={() => setChoosing(false)}>{t('common.cancel')}</Button>}
+                    </>
+                )}
+                {product && !choosing && (
                     <div className="flex flex-wrap items-end gap-3">
                         <Field label={t('milkbasket.approvals.quantity')}>
                             <TextInput type="number" min={1} max={MAX_QUANTITY} inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} className="w-24" />
@@ -332,7 +370,8 @@ export function MilkbasketBasket({ mb }: { mb: MilkbasketState }) {
                 <>
                     <ul className="mt-3 divide-y divide-line rounded-xl border border-line">
                         {basket.products.map(p => (
-                            <li key={p.productId} className="flex items-start gap-3 px-3 py-2.5">
+                            <li key={p.productId} className="flex items-center gap-3 px-3 py-2.5">
+                                <ProductImage url={p.imageUrl} alt={p.name} size={40} />
                                 <div className="min-w-0 flex-1">
                                     <p className="font-medium text-ink">{p.name}</p>
                                     <p className="text-xs text-ink-muted">

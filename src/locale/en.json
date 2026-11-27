@@ -723,7 +723,7 @@
             "adding": "Adding to Milkbasket…",
             "waiting": "Milkbasket: waiting for an OK",
             "dialogTitle": "Add {{name}} to Milkbasket",
-            "pickProduct": "This item isn’t linked to a Milkbasket product yet. Pick it from your recent orders; it will be remembered next time.",
+            "pickProduct": "This item isn’t linked to a Milkbasket product yet. Search Milkbasket or pick from your orders; it will be remembered next time.",
             "forDate": "delivery {{day}}",
             "confirm": "Add to basket",
             "added": "{{item}} added to the Milkbasket basket for {{day}}, and marked bought.",
@@ -742,7 +742,13 @@
             "savings": "You save",
             "deliveryFee": "Delivery fee",
             "free": "Free",
-            "payable": "To pay"
+            "payable": "To pay",
+            "change": "Change product",
+            "saveLink": "Save link",
+            "linked": "{{item}} is now linked to {{product}} on Milkbasket.",
+            "willRelink": "This becomes {{item}}’s Milkbasket product from now on.",
+            "pickOther": "Pick another Milkbasket product for this item.",
+            "failedPickAnother": "Milkbasket didn’t add it: {{message}} Pick another product."
         },
         "noLogin": "No Milkbasket login is saved yet, so nothing can be added. Add one in Settings.",
         "noRefresh": "The saved login has no refresh token, so it can’t renew itself and will stop working within a day. Add a refresh token in Settings.",
@@ -760,6 +766,16 @@
             "save": "Save login",
             "saved": "Login saved, encrypted. It renews itself from now on.",
             "invalid": "Paste the token as copied: letters, numbers and + / =, no spaces."
+        },
+        "pick": {
+            "label": "Where to find the product",
+            "search": "Search Milkbasket",
+            "orders": "My orders",
+            "placeholder": "Search Milkbasket, e.g. toned milk",
+            "go": "Search",
+            "none": "No products found.",
+            "failed": "Couldn’t search Milkbasket: {{message}}",
+            "oos": "Out of stock"
         }
     }
 }

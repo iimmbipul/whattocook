@@ -7,6 +7,7 @@ import {
     addToBasket, addToBasketPayload, canMove, cleanSettings, cleanToken, decideOnLow, defaultSettings, deliveryDate,
     GET_BASKET_QUERY, fetchBasket, parseBasket,
     REFRESH_QUERY, isAuthError, parseRefreshResponse, refreshAuth,
+    SEARCH_QUERY, cleanImageUrl, parseSearchProducts, searchProducts, searchVariables,
     fetchOrderDetail, fetchOrders, isBackToOk, isOrderTrigger, mergeHistory, milkbasketHeaders, parseAddResponse,
     parseOrderDetail, parseOrders, priceLimitFromEnv, routeMapped, searchHistory, tokenExpiry,
 } from '../src/lib/milkbasket/logic.ts';
@@ -338,8 +339,8 @@ test('basket: products from every group, one row per product, with the bill', ()
     assert.equal(basket.id, 463396538);
     assert.equal(basket.date, '2026-11-28');
     assert.deepEqual(basket.products, [
-        { productId: 76555, name: 'Jabsons Khari Sing Salted Peanut', size: '200 GM', quantity: 1, price: 87 },
-        { productId: 45657, name: 'Amul Taaza Milk', size: '500 ML', quantity: 3, price: 29 },
+        { productId: 76555, name: 'Jabsons Khari Sing Salted Peanut', size: '200 GM', quantity: 1, price: 87, imageUrl: '' },
+        { productId: 45657, name: 'Amul Taaza Milk', size: '500 ML', quantity: 3, price: 29, imageUrl: '' },
     ]);
     assert.equal(basket.subTotal, 100);
     assert.equal(basket.deliveryFee, 15);
@@ -436,6 +437,72 @@ test('secrets in the database: encrypted, tamper-proof, tied to the key', () => 
     assert.equal(fingerprint(token).includes('example'), false);
 });
 
+/* ─── Searching Milkbasket, and product pictures ─────────────────────── */
+
+const IMG = 'https://static-milkbasket.cdn.jio.com/products/2_0_1705487143.jpeg?policy=comprehensive_portrait_v1&dpr=3';
+
+// Shaped like Milkbasket's getSearchProducts answer (trimmed).
+const searchBody = {
+    data: {
+        getSearchProducts: {
+            products: [
+                { product: { id: 2, name: 'Amul Taaza Toned Milk Pouch', category: { name: 'Milk', subCategory: { name: 'Fresh Milk', type: 'Toned & Double Toned Milk' } }, availability: { isOos: false, oos: false, forcedOos: false, maxQuantity: 10, cutOff: { text: '12 AM' } }, assets: { image: { url: IMG, type: 1 }, video: null }, weight: { text: '500 ML' }, price: { mrp: { amount: '30', value: 30 }, price: { amount: '28', value: 28 } } }, variant: null },
+                { product: { id: 8573, name: 'Amul  Moti Toned Milk Pouch', availability: { isOos: false, oos: false, forcedOos: false, maxQuantity: 10 }, assets: { image: { url: 'http://static-milkbasket.cdn.jio.com/x.png' } }, weight: { text: '450 ML' }, price: { price: { value: 30 } } } },
+                { product: { id: 999, name: 'Gone Milk', availability: { isOos: true, oos: true, forcedOos: false, maxQuantity: null }, assets: { image: { url: 'https://evil.example.com/x.png' } }, weight: { text: '1 L' }, price: { price: { value: 60 } } } },
+                { product: { id: 2, name: 'Duplicate' } },
+                { product: { id: null, name: 'Broken' } },
+            ],
+            pages: { limit: 20, page: 1, hasNextPage: true, records: 440, pages: 2 },
+        },
+    },
+};
+
+test('search: products with picture, today’s price, MRP and stock', () => {
+    const { products, hasNextPage, total } = parseSearchProducts(searchBody);
+    assert.equal(hasNextPage, true);
+    assert.equal(total, 440);
+    assert.deepEqual(products.map(p => p.productId), [2, 8573, 999]);
+    assert.deepEqual(products[0], {
+        productId: 2, name: 'Amul Taaza Toned Milk Pouch', size: '500 ML', price: 28, mrp: 30, imageUrl: IMG,
+        available: true, maxQuantity: 10, category: 'Milk · Toned & Double Toned Milk',
+    });
+    assert.equal(products[1].name, 'Amul Moti Toned Milk Pouch'); // double spaces tidied
+    assert.equal(products[1].imageUrl, ''); // not https
+    assert.equal(products[2].available, false);
+    assert.equal(products[2].imageUrl, ''); // not Milkbasket's CDN
+    assert.deepEqual(parseSearchProducts(null), { products: [], hasNextPage: false, total: null });
+});
+
+test('search: sent like the website does', async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: searchBody }]);
+    const result = await searchProducts(deps(fetch), '  toned milk ', '3');
+    assert.equal(result.products.length, 3);
+    const sent = calls[0].body;
+    assert.equal(sent.operationName, 'getSearchProducts');
+    assert.equal(sent.query, SEARCH_QUERY);
+    assert.deepEqual(sent.variables, { searchPayload: { searchText: 'toned milk', experimentId: 1, suggestedSearchText: '' }, cityId: 3, page: { page: 1, limit: 20 } });
+    assert.equal(calls[0].init.headers.cityid, '4'); // the header keeps the configured city
+    assert.deepEqual(searchVariables('x'.repeat(100), '1').searchPayload.searchText.length, 60);
+    const refused = mockFetch([{ status: 401, body: '' }]);
+    const err = await searchProducts(deps(refused.fetch), 'milk', '3').then(() => null, e => e);
+    assert.equal(isAuthError(err), true);
+});
+
+test('pictures: only https images on Milkbasket’s CDN are kept', () => {
+    assert.equal(cleanImageUrl(IMG), IMG);
+    assert.equal(cleanImageUrl('https://images.milkbasket.com/a.png'), 'https://images.milkbasket.com/a.png');
+    assert.equal(cleanImageUrl('http://static-milkbasket.cdn.jio.com/a.png'), '');
+    assert.equal(cleanImageUrl('https://jio.com.evil.example/a.png'), '');
+    assert.equal(cleanImageUrl('javascript:alert(1)'), '');
+    assert.equal(cleanImageUrl(`https://static-milkbasket.cdn.jio.com/${'a'.repeat(700)}`), '');
+    assert.equal(cleanImageUrl(null), '');
+    // Order lines and basket products carry their picture too.
+    const lines = parseOrderDetail({ data: { getOrderDetail: { data: [{ data: [{ id: 1, name: 'Milk', assets: { image: { url: IMG } }, order: { productId: 2, quantity: 1 }, price: { price: { value: 28 } } }] }] } } }, '26 Nov');
+    assert.equal(lines[0].imageUrl, IMG);
+    const basket = parseBasket({ data: { getExtendedBasket: { basket: { date: '2026-11-28', data: [{ data: [{ product: { name: 'Milk', assets: { image: { url: IMG } }, order: { productId: 2, quantity: 1 } } }] }] } } } });
+    assert.equal(basket.products[0].imageUrl, IMG);
+});
+
 /* ─── Order history ──────────────────────────────────────────────────── */
 
 const detail = lines => ({ data: { getOrderDetail: { data: [{ data: lines }] } } });
@@ -447,7 +514,7 @@ test('orders and order lines: the product id comes from order.productId, not the
     const orders = parseOrders({ data: { getAccountHistory: { orders: [{ id: 9001, date: '26 Nov 2026', day: 'Thu', amount: 210 }, { id: 'bad/id' }] } } });
     assert.deepEqual(orders, [{ id: '9001', date: '26 Nov 2026' }]);
     const products = parseOrderDetail(detail([line(555, 101, 'Toned Milk', '500 ml', 27.5, 2), line(556, null, 'Broken', '', 1)]), '26 Nov 2026');
-    assert.deepEqual(products, [{ productId: 101, name: 'Toned Milk', size: '500 ml', price: 27.5, lastOrdered: '26 Nov 2026', orders: 1 }]);
+    assert.deepEqual(products, [{ productId: 101, name: 'Toned Milk', size: '500 ml', price: 27.5, lastOrdered: '26 Nov 2026', orders: 1, imageUrl: '' }]);
     assert.deepEqual(parseOrderDetail({ data: null }, 'x'), []);
 });
 

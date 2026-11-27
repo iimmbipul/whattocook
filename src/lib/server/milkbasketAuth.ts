@@ -34,6 +34,8 @@ export interface BaseConfig {
     apiHost: string;
     cityId: string;
     hubId: string;
+    /** The cityId variable searches send (MILKBASKET_SEARCH_CITY_ID); it can differ from the cityid header. */
+    searchCityId: string;
     appVersion: string;
     /** Environment variables that are missing or invalid (MILKBASKET_CITY_ID, MILKBASKET_HUB_ID, MILKBASKET_API_URL). */
     missing: string[];
@@ -44,6 +46,7 @@ export function baseConfig(): BaseConfig {
     const id = (v: string | undefined) => (/^\d{1,9}$/.test(v?.trim() ?? '') ? v!.trim() : '');
     const cityId = id(process.env.MILKBASKET_CITY_ID);
     const hubId = id(process.env.MILKBASKET_HUB_ID);
+    const searchCityId = id(process.env.MILKBASKET_SEARCH_CITY_ID) || cityId;
     const version = process.env.MILKBASKET_APP_VERSION?.trim() ?? '';
     const appVersion = /^\d+(\.\d+){1,3}$/.test(version) ? version : M.DEFAULT_APP_VERSION;
     const apiUrl = process.env.MILKBASKET_API_URL?.trim() || M.DEFAULT_API_URL;
@@ -54,7 +57,7 @@ export function baseConfig(): BaseConfig {
         apiHost = '';
     }
     const missing = [!cityId && 'MILKBASKET_CITY_ID', !hubId && 'MILKBASKET_HUB_ID', !apiHost && 'MILKBASKET_API_URL'].filter((m): m is string => !!m);
-    return { apiUrl, apiHost, cityId, hubId, appVersion, missing };
+    return { apiUrl, apiHost, cityId, hubId, searchCityId, appVersion, missing };
 }
 
 function makeDeps(base: BaseConfig, token: string): M.MilkbasketDeps {
