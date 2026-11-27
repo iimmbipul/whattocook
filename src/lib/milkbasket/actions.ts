@@ -1,14 +1,16 @@
 'use server';
 
 /**
- * Milkbasket server actions (owner only). Each one is a public endpoint: the
- * user and household come from the verified session, and every argument is
- * validated in src/lib/server/milkbasket.ts. The admin view loads through
- * GET /api/milkbasket/admin.
+ * Milkbasket server actions. Each one is a public endpoint: the user and
+ * household come from the verified session, and every argument is validated in
+ * src/lib/server/milkbasket.ts. Approving, rejecting, adding by hand and the
+ * order history are for the owner and members; the rest is owner only. Views
+ * load through GET /api/milkbasket, /api/milkbasket/basket and /api/milkbasket/admin.
  */
 
 import { getSessionUser } from '../server/currentUser';
 import {
+    addManually,
     approveRequest,
     getOrderHistory,
     rejectRequest,
@@ -18,11 +20,18 @@ import {
     setMappingEnabled,
     testConnection,
     updateMilkbasketSettings,
+    type ManualAddInput,
     type MappingInput,
 } from '../server/milkbasket';
 import type { MilkbasketResult, OrderHistoryResult, PurchaseRequestRow } from './types';
 
 const noSession = { ok: false, error: 'auth' } as const;
+
+/** Owner or member: add a listed item to the Milkbasket basket now (no approval needed). */
+export async function addToMilkbasket(input: ManualAddInput): Promise<MilkbasketResult<PurchaseRequestRow>> {
+    const user = await getSessionUser();
+    return user ? addManually(user, input) : noSession;
+}
 
 export async function saveMilkbasketMapping(input: MappingInput): Promise<MilkbasketResult> {
     const user = await getSessionUser();
