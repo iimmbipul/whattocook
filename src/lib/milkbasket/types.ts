@@ -54,9 +54,15 @@ export interface MilkbasketAdminView {
         configured: boolean;
         missing: string[];
         apiHost: string;
-        tokenExpiresAt: number | null;
-        /** 'expiring' = within 3 days; 'unknown' when the token isn't a JWT with an expiry. */
-        tokenStatus: 'ok' | 'expiring' | 'expired' | 'unknown';
+        /** A login is saved (encrypted in Firestore), and whether it has a refresh token to renew itself. */
+        hasLogin: boolean;
+        canRenew: boolean;
+        /** When the current login token runs out, and when it was last renewed (ms). */
+        authExpiresAt: number | null;
+        renewedAt: number | null;
+        source: 'env' | 'admin' | 'renewed' | null;
+        /** The last renewal problem, cleared by the next success. */
+        loginError: { message: string; atMs: number } | null;
     };
     today: string;
     settings: MilkbasketSettings;

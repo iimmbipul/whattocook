@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PlugZap, ShoppingCart } from 'lucide-react';
+import { KeyRound, PlugZap, ShoppingCart } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { Section } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -17,6 +17,7 @@ import {
     rejectMilkbasketRequest,
     removeMilkbasketMapping,
     retryMilkbasketRequest,
+    saveMilkbasketLogin,
     saveMilkbasketMapping,
     saveMilkbasketSettings,
     setMilkbasketAutoOrder,
@@ -130,13 +131,27 @@ export default function MilkbasketAdmin() {
                         </span>
                     </Alert>
                 )}
-                {!view.connection.configured && (
+                {view.connection.missing.length > 0 && (
                     <Alert tone="warning">{t('milkbasket.notConfigured', { missing: view.connection.missing.join(', ') })}</Alert>
                 )}
-                {view.connection.configured && view.connection.tokenExpiresAt !== null && (view.connection.tokenStatus === 'expired' || view.connection.tokenStatus === 'expiring') && (
-                    <Alert tone={view.connection.tokenStatus === 'expired' ? 'warning' : 'info'}>
-                        {t(view.connection.tokenStatus === 'expired' ? 'milkbasket.tokenExpired' : 'milkbasket.tokenExpiring', { when: markedAt(view.connection.tokenExpiresAt, t, locale) })}
+                {view.connection.missing.length === 0 && !view.connection.hasLogin && (
+                    <Alert tone="warning">
+                        <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span>{t('milkbasket.noLogin')}</span>
+                            <Button size="sm" variant="secondary" onClick={() => setTab('settings')}>{t('milkbasket.addLogin')}</Button>
+                        </span>
                     </Alert>
+                )}
+                {view.connection.hasLogin && !view.connection.canRenew && (
+                    <Alert tone="info">
+                        <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span>{t('milkbasket.noRefresh')}</span>
+                            <Button size="sm" variant="secondary" onClick={() => setTab('settings')}>{t('milkbasket.addLogin')}</Button>
+                        </span>
+                    </Alert>
+                )}
+                {view.connection.loginError && (
+                    <Alert tone="warning">{t('milkbasket.loginError', { when: markedAt(view.connection.loginError.atMs, t, locale), message: view.connection.loginError.message })}</Alert>
                 )}
                 {view.problem && (
                     <Alert tone="warning">
@@ -539,7 +554,9 @@ function SettingsForm({ view, onDone }: { view: MilkbasketAdminView; onDone: Don
                         {view.connection.configured
                             ? [
                                 t('milkbasket.settings.connection', { host: view.connection.apiHost }),
-                                view.connection.tokenExpiresAt !== null && t('milkbasket.settings.tokenUntil', { when: markedAt(view.connection.tokenExpiresAt, t, locale) }),
+                                view.connection.canRenew && t('milkbasket.settings.loginRenews'),
+                                view.connection.authExpiresAt !== null && t('milkbasket.settings.loginValid', { when: markedAt(view.connection.authExpiresAt, t, locale) }),
+                                view.connection.renewedAt !== null && t('milkbasket.settings.loginRenewed', { when: markedAt(view.connection.renewedAt, t, locale) }),
                             ].filter(Boolean).join(' · ')
                             : t('milkbasket.settings.notConfigured')}
                     </span>
@@ -547,6 +564,57 @@ function SettingsForm({ view, onDone }: { view: MilkbasketAdminView; onDone: Don
                 <Button onClick={save} loading={saving} disabled={!valid}>{t('common.save')}</Button>
             </div>
             {test && <Alert tone={test.tone}>{test.text}</Alert>}
+            <LoginForm hasLogin={view.connection.hasLogin} onDone={onDone} />
+        </div>
+    );
+}
+
+/** The Milkbasket login the server uses. The tokens are encrypted on the server and never shown again. */
+function LoginForm({ hasLogin, onDone }: { hasLogin: boolean; onDone: Done }) {
+    const { t } = useLocale();
+    const [refreshToken, setRefreshToken] = useState('');
+    const [authToken, setAuthToken] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+    const looksValid = (v: string) => /^[\x21-\x7e]{10,4096}$/.test(v.trim().replace(/^bearer\s+/i, ''));
+
+    const save = async () => {
+        if (!looksValid(refreshToken) || (authToken.trim() !== '' && !looksValid(authToken))) {
+            setError(t('milkbasket.login.invalid'));
+            return;
+        }
+        setSaving(true);
+        setError('');
+        const result = await saveMilkbasketLogin(refreshToken, authToken).catch(() => ({ ok: false as const, error: 'failed' as const }));
+        setSaving(false);
+        if (!result.ok) {
+            setError(result.error === 'invalid' ? t('milkbasket.login.invalid') : errorText(result, t));
+            return;
+        }
+        setRefreshToken('');
+        setAuthToken('');
+        await onDone({ tone: 'success', text: t('milkbasket.login.saved') });
+    };
+
+    return (
+        <div className="space-y-3 border-t border-line pt-4">
+            <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-ink"><KeyRound size={15} aria-hidden="true" />{t('milkbasket.login.title')}</h3>
+                <p className="mt-0.5 text-sm text-ink-muted">{t(hasLogin ? 'milkbasket.login.saved_status' : 'milkbasket.login.none')}</p>
+                <p className="mt-1 text-xs text-ink-muted">{t('milkbasket.login.help')}</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+                <Field label={t('milkbasket.login.refreshToken')} hint={t('milkbasket.login.refreshHint')}>
+                    <TextInput type="password" autoComplete="off" spellCheck={false} value={refreshToken} onChange={e => setRefreshToken(e.target.value)} />
+                </Field>
+                <Field label={t('milkbasket.login.authToken')} hint={t('milkbasket.login.authHint')}>
+                    <TextInput type="password" autoComplete="off" spellCheck={false} value={authToken} onChange={e => setAuthToken(e.target.value)} />
+                </Field>
+            </div>
+            {error && <Alert tone="error">{error}</Alert>}
+            <div className="flex justify-end">
+                <Button variant="secondary" onClick={save} loading={saving} disabled={!refreshToken.trim()}>{t('milkbasket.login.save')}</Button>
+            </div>
         </div>
     );
 }

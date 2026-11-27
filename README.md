@@ -154,28 +154,35 @@ meal-planner/
 
 ## 🛒 Milkbasket auto-order
 
-When a pantry item drops to **Quarter** (low) or **Empty**, the app can add it to your Milkbasket basket. The app's server calls Milkbasket's GraphQL API (`consumerbff.milkbasket.com`) directly, with your login token, so it works on Vercel. The token is a server-only environment variable: it is only sent in the `Authorization` header to Milkbasket, and never stored in Firestore, logged or shown.
+When a pantry item drops to **Quarter** (low) or **Empty**, the app can add it to your Milkbasket basket. The app's server calls Milkbasket's GraphQL API (`consumerbff.milkbasket.com`) directly, so it works on Vercel.
 
 ### Setup
 
-1. Get your login details from the Milkbasket website. Sign in, open the browser's developer tools (F12), go to **Network**, and click any `graphql` request. Under **Request headers**, copy:
-   - `authorization`: the part after `Bearer `
-   - `cityid` and `hubid`
-2. Add them as environment variables. On Vercel, go to **Settings → Environment Variables**; for local runs, use `.env.local`. Never prefix these with `NEXT_PUBLIC_`.
+1. Add these environment variables. On Vercel, go to **Settings → Environment Variables**; for local runs, use `.env.local`. Never prefix them with `NEXT_PUBLIC_`.
 
    ```env
-   MILKBASKET_TOKEN=eyJ...           # your login token, without "Bearer "
-   MILKBASKET_CITY_ID=1              # from the cityid header
-   MILKBASKET_HUB_ID=1               # from the hubid header
+   MILKBASKET_CITY_ID=1              # the cityid header on milkbasket.com requests
+   MILKBASKET_HUB_ID=1               # the hubid header
    MB_HOUSEHOLD_IDS=owner_uid        # households allowed to use this account, comma-separated; Admin → Milkbasket shows yours
    AUTO_ADD_PRICE_LIMIT=150          # optional; items priced below this (₹ per unit) are added without asking
    MILKBASKET_APP_VERSION=9.0.10.0   # optional; change it if Milkbasket starts asking for a newer app version
    ```
 
-3. Redeploy so the new variables take effect.
-4. Open **Admin → Milkbasket → Settings** and press **Test connection**. It reads your recent orders and changes nothing. Then turn **Auto-order** on; it starts off.
+   `SESSION_SECRET` must also be set, as it already is for sign-in: the Milkbasket login is encrypted with a key derived from it.
+2. Redeploy so the new variables take effect.
+3. Give the app its own Milkbasket login:
+   - Sign in on milkbasket.com in a **private window**.
+   - Press F12, open **Network** and reload. Find the `refreshAuthToken` request (or the sign-in response), and copy its `refreshToken`. Optionally also copy the `authorization` value, without "Bearer".
+   - **Close the window without logging out.** The app owns that login from now on: Milkbasket replaces the refresh token each time it is used, so using the same login in a browser would cancel the app's copy.
+   - Paste the tokens in **Admin → Milkbasket → Settings → Milkbasket login**.
+4. Press **Test connection**. It reads your recent orders and changes nothing. Then turn **Auto-order** on; it starts off.
 
-**The token expires.** Admin → Milkbasket shows when it does, warns three days before, and shows a banner once it has expired or Milkbasket refuses it. Until you put a fresh token in `MILKBASKET_TOKEN` and redeploy, adds fail and nothing is marked bought.
+**The login renews itself.** Milkbasket's login token lasts about a day (`authExpiry` 1440 minutes). The server renews it with the refresh token shortly before it runs out, or when Milkbasket refuses it, and then retries the request.
+- Both tokens are kept in Firestore at `milkbasket_auth/account`, encrypted with AES-256-GCM. They are never logged or shown, and security rules keep the browser out.
+- Only one renewal runs at a time, because each one replaces the refresh token.
+- If renewal fails, for example after logging out of that session, Admin shows a banner and adds pause until you paste a new refresh token.
+- If `SESSION_SECRET` changes, the stored login can't be read any more, so paste it again.
+- `MILKBASKET_TOKEN` and `MILKBASKET_REFRESH_TOKEN` can still seed the login from the environment. A changed seed replaces the stored login.
 
 ### On the Groceries page (owner and members)
 

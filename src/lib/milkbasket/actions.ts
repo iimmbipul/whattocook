@@ -19,6 +19,7 @@ import {
     saveMapping,
     setMappingEnabled,
     testConnection,
+    updateMilkbasketLogin,
     updateMilkbasketSettings,
     type ManualAddInput,
     type MappingInput,
@@ -83,4 +84,10 @@ export async function testMilkbasketConnection(): Promise<MilkbasketResult<{ mes
 export async function loadMilkbasketOrderHistory(refresh: boolean): Promise<MilkbasketResult<OrderHistoryResult>> {
     const user = await getSessionUser();
     return user ? getOrderHistory(user, refresh) : noSession;
+}
+
+/** Owner: save the Milkbasket login. The tokens are encrypted on the server and never sent back. */
+export async function saveMilkbasketLogin(refreshToken: string, authToken: string): Promise<MilkbasketResult> {
+    const user = await getSessionUser();
+    return user ? updateMilkbasketLogin(user, refreshToken, authToken) : noSession;
 }

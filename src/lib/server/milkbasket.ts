@@ -6,6 +6,7 @@ import type { User } from '@/types/meal';
 import { adminFirestore } from './firebaseAdmin';
 import { isSafeDocId } from './guards';
 import { isMilkbasketHousehold, runAfterResponse } from './milkbasketTrigger';
+import { getDeps, loginStatus, readWithLogin, renewedDeps, saveLogin } from './milkbasketAuth';
 import { listPantryItems, restockFromBasket } from './grocery';
 import { actorFromUser } from '../actor';
 import { localTime } from '../ratings/logic';
@@ -61,54 +62,6 @@ const ACTIVITY_LIMIT = 50;
 
 function defaultPriceLimit(): number {
     return M.priceLimitFromEnv(process.env.AUTO_ADD_PRICE_LIMIT);
-}
-
-/**
- * Milkbasket settings from the environment: MILKBASKET_TOKEN, MILKBASKET_CITY_ID
- * and MILKBASKET_HUB_ID (required), MILKBASKET_APP_VERSION and MILKBASKET_API_URL
- * (optional; the URL is only changed for testing against a mock).
- */
-function milkbasketConfig(): { deps: M.MilkbasketDeps | null; missing: string[]; apiHost: string; tokenExpiresAt: number | null } {
-    const token = M.cleanToken(process.env.MILKBASKET_TOKEN);
-    const id = (v: string | undefined) => (/^\d{1,9}$/.test(v?.trim() ?? '') ? v!.trim() : '');
-    const cityId = id(process.env.MILKBASKET_CITY_ID);
-    const hubId = id(process.env.MILKBASKET_HUB_ID);
-    const version = process.env.MILKBASKET_APP_VERSION?.trim() ?? '';
-    const appVersion = /^\d+(\.\d+){1,3}$/.test(version) ? version : M.DEFAULT_APP_VERSION;
-    const apiUrl = process.env.MILKBASKET_API_URL?.trim() || M.DEFAULT_API_URL;
-    let apiHost = '';
-    try {
-        apiHost = new URL(apiUrl).host;
-    } catch {
-        apiHost = '';
-    }
-    const missing = [
-        !token && 'MILKBASKET_TOKEN',
-        !cityId && 'MILKBASKET_CITY_ID',
-        !hubId && 'MILKBASKET_HUB_ID',
-        !apiHost && 'MILKBASKET_API_URL',
-    ].filter((m): m is string => !!m);
-    const deps: M.MilkbasketDeps | null = missing.length > 0 ? null : {
-        apiUrl,
-        token,
-        cityId,
-        hubId,
-        appVersion,
-        fetch: (url, init) => fetch(url, { ...init, cache: 'no-store' }),
-    };
-    return { deps, missing, apiHost, tokenExpiresAt: token ? M.tokenExpiry(token) : null };
-}
-
-/** What the admin panel may show about the connection: never the token itself. */
-function connectionInfo(): MilkbasketAdminView['connection'] {
-    const { deps, missing, apiHost, tokenExpiresAt } = milkbasketConfig();
-    const now = Date.now();
-    const tokenStatus = tokenExpiresAt === null ? 'unknown' : tokenExpiresAt < now ? 'expired' : tokenExpiresAt < now + 3 * 86_400_000 ? 'expiring' : 'ok';
-    return { configured: !!deps, missing, apiHost, tokenExpiresAt, tokenStatus };
-}
-
-function notConfigured(missing: string[]): string {
-    return `Milkbasket isn't set up on the server: add ${missing.join(', ')} to the environment variables and redeploy.`;
 }
 
 /* ─── Reading documents ──────────────────────────────────────────────── */
@@ -390,15 +343,20 @@ async function processRequest(fs: Fs, hid: string, job: { ref: DocumentReference
         return 'returned';
     }
     if (req.milkbasketProductId === null || req.price === null) return fail('No Milkbasket product or price on this request.');
-    const config = milkbasketConfig();
-    if (!config.deps) {
-        const message = notConfigured(config.missing);
-        await setProblem(fs, hid, message);
-        return fail(message);
+    const got = await getDeps();
+    if (!got.ok) {
+        await setProblem(fs, hid, got.message);
+        return fail(got.message);
     }
 
     const date = M.deliveryDate(localTime(new Date()).date, settings.deliveryDays);
-    const outcome = await M.addToBasket(config.deps, { productId: req.milkbasketProductId, price: req.price, quantity: req.quantity, date });
+    const body = { productId: req.milkbasketProductId, price: req.price, quantity: req.quantity, date };
+    let outcome = await M.addToBasket(got.deps, body);
+    if (!outcome.ok && outcome.kind === 'auth') {
+        // The login token ran out: renew it with the refresh token and try once more (nothing was added).
+        const renewed = await renewedDeps(got.deps);
+        if (renewed) outcome = await M.addToBasket(renewed, body);
+    }
     const nowMs = Date.now();
 
     if (!outcome.ok) {
@@ -479,7 +437,7 @@ export async function getMilkbasketAdminView(user: User, now: Date = new Date())
     const base: MilkbasketAdminView = {
         allowed,
         householdId: hid,
-        connection: connectionInfo(),
+        connection: await loginStatus(),
         today: localTime(now).date,
         settings: M.defaultSettings(defaultPriceLimit()),
         defaultPriceLimit: defaultPriceLimit(),
@@ -788,19 +746,13 @@ export async function updateMilkbasketSettings(user: User, input: unknown): Prom
     return { ok: true };
 }
 
-/** Test connection: a read-only fetchOrders call with the server's token. Never shows the token. */
+/** Test connection: a read-only fetchOrders call with the saved login (renewed if needed). Never shows the token. */
 export async function testConnection(user: User): Promise<MilkbasketResult<{ message: string }>> {
     const denied = guardOwner(user);
     if (denied) return denied;
     const fs = adminFirestore();
-    const config = milkbasketConfig();
-    if (!config.deps) {
-        const message = notConfigured(config.missing);
-        await setProblem(fs, user.householdId, message);
-        return { ok: false, error: 'milkbasket', message };
-    }
     try {
-        const orders = await M.fetchOrders(config.deps);
+        const orders = await readWithLogin(M.fetchOrders);
         await setProblem(fs, user.householdId, null);
         return { ok: true, data: { message: `Your account answered with ${orders.length} recent order${orders.length === 1 ? '' : 's'}.` } };
     } catch (err) {
@@ -825,32 +777,24 @@ export async function getOrderHistory(user: User, refresh: unknown): Promise<Mil
         : null;
     if (cachedResult && refresh !== true && Date.now() - cachedResult.fetchedAtMs < HISTORY_TTL_MS) return { ok: true, data: cachedResult };
 
-    const config = milkbasketConfig();
-    if (!config.deps) {
-        if (cachedResult && refresh !== true) return { ok: true, data: cachedResult };
-        return { ok: false, error: 'milkbasket', message: notConfigured(config.missing) };
-    }
-    const deps = config.deps;
     try {
-        const orders = await M.fetchOrders(deps);
-        const perOrder: M.HistoryProduct[][] = new Array(orders.length).fill([]);
-        let failures = 0;
-        // A few at a time, keeping the orders' order (latest first) for the merge.
-        for (let i = 0; i < orders.length; i += 3) {
-            await Promise.all(orders.slice(i, i + 3).map(async (order, j) => {
-                try {
-                    perOrder[i + j] = await M.fetchOrderDetail(deps, order);
-                } catch {
-                    failures++;
-                }
-            }));
-        }
-        if (orders.length > 0 && failures === orders.length) throw new Error('Milkbasket did not return any order details.');
-        const result: OrderHistoryResult = {
-            products: M.mergeHistory(perOrder).slice(0, MAX_HISTORY_PRODUCTS),
-            fetchedAtMs: Date.now(),
-            orderCount: orders.length - failures,
-        };
+        const result = await readWithLogin(async (deps): Promise<OrderHistoryResult> => {
+            const orders = await M.fetchOrders(deps);
+            const perOrder: M.HistoryProduct[][] = new Array(orders.length).fill([]);
+            let failures = 0;
+            // A few at a time, keeping the orders' order (latest first) for the merge.
+            for (let i = 0; i < orders.length; i += 3) {
+                await Promise.all(orders.slice(i, i + 3).map(async (order, j) => {
+                    try {
+                        perOrder[i + j] = await M.fetchOrderDetail(deps, order);
+                    } catch {
+                        failures++;
+                    }
+                }));
+            }
+            if (orders.length > 0 && failures === orders.length) throw new Error('Milkbasket did not return any order details.');
+            return { products: M.mergeHistory(perOrder).slice(0, MAX_HISTORY_PRODUCTS), fetchedAtMs: Date.now(), orderCount: orders.length - failures };
+        });
         await ref.set(result);
         await setProblem(fs, user.householdId, null);
         return { ok: true, data: result };
@@ -872,7 +816,15 @@ export async function getHouseholdMilkbasketView(user: User, now: Date = new Dat
     const hid = user.householdId;
     const today = localTime(now).date;
     const empty: MilkbasketHouseholdView = { available: false, today, deliveryDate: M.deliveryDate(today), priceLimit: defaultPriceLimit(), approvals: [], items: {} };
-    if (!isMilkbasketHousehold(hid) || !milkbasketConfig().deps) return empty;
+    if (!isMilkbasketHousehold(hid)) return empty;
+    const login = await loginStatus();
+    if (!login.configured) return empty;
+    // Keep the login fresh while the household uses the app: renew in the background when it runs out soon.
+    if (login.canRenew && login.authExpiresAt !== null && login.authExpiresAt < now.getTime() + 60 * 60_000) {
+        runAfterResponse('login renewal', async () => {
+            await getDeps();
+        });
+    }
 
     const fs = adminFirestore();
     const [settings, mappingSnap, openSnap, recentSnap] = await Promise.all([
@@ -917,10 +869,9 @@ export async function getBasket(user: User, refresh: unknown): Promise<Milkbaske
     if (cached && refresh !== true && Date.now() - fetchedAtMs < BASKET_TTL_MS) {
         return { ok: true, data: { basket: (cached.basket ?? null) as BasketResult['basket'], fetchedAtMs } };
     }
-    const config = milkbasketConfig();
-    if (!config.deps) return { ok: false, error: 'milkbasket', message: notConfigured(config.missing) };
+
     try {
-        const basket = await M.fetchBasket(config.deps);
+        const basket = await readWithLogin(M.fetchBasket);
         const result: BasketResult = { basket, fetchedAtMs: Date.now() };
         await ref.set(result);
         return { ok: true, data: result };
@@ -1032,4 +983,18 @@ export async function addManually(user: User, input: unknown): Promise<Milkbaske
     await runWorker(hid);
     const row = await requestRow(fs, hid, step.requestId);
     return row ? { ok: true, data: row } : { ok: false, error: 'failed' };
+}
+
+/** Owner: save the Milkbasket login (a refresh token, and optionally a login token), encrypted. */
+export async function updateMilkbasketLogin(user: User, refreshToken: unknown, authToken: unknown): Promise<MilkbasketResult> {
+    const denied = guardOwner(user);
+    if (denied) return denied;
+    const saved = await saveLogin(refreshToken, authToken, user.uid);
+    if (!saved.ok) {
+        return saved.error === 'no-key'
+            ? { ok: false, error: 'failed', message: 'SESSION_SECRET must be set on the server to keep the Milkbasket login.' }
+            : { ok: false, error: 'invalid' };
+    }
+    await setProblem(adminFirestore(), user.householdId, null);
+    return { ok: true };
 }

@@ -6,9 +6,11 @@ import {
     ADD_TO_BASKET_MUTATION, CANCEL_ON_OK, DEFAULT_API_URL, MAX_RETRIES, OPEN_STATUSES, RETRY_DELAYS_MS,
     addToBasket, addToBasketPayload, canMove, cleanSettings, cleanToken, decideOnLow, defaultSettings, deliveryDate,
     GET_BASKET_QUERY, fetchBasket, parseBasket,
+    REFRESH_QUERY, isAuthError, parseRefreshResponse, refreshAuth,
     fetchOrderDetail, fetchOrders, isBackToOk, isOrderTrigger, mergeHistory, milkbasketHeaders, parseAddResponse,
     parseOrderDetail, parseOrders, priceLimitFromEnv, routeMapped, searchHistory, tokenExpiry,
 } from '../src/lib/milkbasket/logic.ts';
+import { fingerprint, seal, secretKey, unseal } from '../src/lib/server/secretBox.ts';
 
 const NOW = Date.parse('2026-11-27T10:00:00Z');
 const HOUR = 3_600_000;
@@ -165,7 +167,7 @@ test('failure: GraphQL errors[], and login problems are told apart', () => {
     assert.equal(parseAddResponse(200, { errors: [{ message: 'x' }], ...ok() }).ok, false);
     const expired = parseAddResponse(200, { errors: [{ message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } }] });
     assert.equal(expired.kind, 'auth');
-    assert.match(expired.message, /MILKBASKET_TOKEN/);
+    assert.match(expired.message, /refresh token in Admin/);
     assert.equal(parseAddResponse(200, { errors: [{ message: 'nope', extensions: { code: 'UNAUTHENTICATED' } }] }).kind, 'auth');
     assert.equal(parseAddResponse(401, null).kind, 'auth');
     assert.equal(parseAddResponse(403, {}).retryable, false);
@@ -275,7 +277,7 @@ test('reads: fetchOrders and getOrderDetail send the queries; errors are readabl
 
     const failures = [
         [refused(), /Couldn't reach Milkbasket/],
-        [{ status: 401, body: '' }, /login token.*MILKBASKET_TOKEN/],
+        [{ status: 401, body: '' }, /login token \(HTTP 401\)/],
         [{ status: 200, body: { errors: [{ message: 'Unauthorized' }] } }, /login token/],
         [{ status: 200, body: { errors: [{ message: 'Something broke' }] } }, /Milkbasket: Something broke/],
         [{ status: 500, body: '' }, /HTTP 500/],
@@ -361,6 +363,77 @@ test('basket: getExtendedBasket is a read-only query with the same headers', asy
     assert.equal(calls[0].init.headers.authorization, `Bearer ${TOKEN}`);
     const refused = mockFetch([{ status: 200, body: { errors: [{ message: 'Unauthorized' }] } }]);
     await assert.rejects(fetchBasket(deps(refused.fetch)), /login token/);
+});
+
+/* ─── Renewing the login, and keeping it encrypted ───────────────────── */
+
+const renewed = { data: { refreshAuthToken: { authKey: 'NEW-AUTH-KEY-0123456789==', refreshKey: 'NEW-REFRESH-KEY-0123456789==', authExpiry: 1440, status: null, error: null, __typename: 'AuthTokens' } } };
+
+test('refreshAuthToken: sent like the website does', async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: renewed }]);
+    const out = await refreshAuth(deps(fetch), 'OLD-REFRESH-KEY-0123456789==');
+    assert.deepEqual(out, { ok: true, authKey: 'NEW-AUTH-KEY-0123456789==', refreshKey: 'NEW-REFRESH-KEY-0123456789==', expiresInMinutes: 1440 });
+    const { body: sent, init } = calls[0];
+    assert.equal(sent.operationName, 'refreshAuthToken');
+    assert.equal(sent.query, REFRESH_QUERY);
+    assert.deepEqual(sent.variables, { appVersion: '9.0.10.0', binaryVersion: '9.0.10', source: 'web', refreshToken: 'OLD-REFRESH-KEY-0123456789==' });
+    assert.equal(init.headers.authorization, `Bearer ${TOKEN}`); // the old (maybe expired) login token goes along
+
+    // With no login token at all (only a refresh token saved), no Authorization header is sent.
+    const bare = mockFetch([{ status: 200, body: renewed }]);
+    await refreshAuth(deps(bare.fetch, { token: '' }), 'OLD-REFRESH-KEY-0123456789==');
+    assert.equal('authorization' in bare.calls[0].init.headers, false);
+});
+
+test('refreshAuthToken: a refused refresh token means signing in again', () => {
+    const signIn = /new refresh token in Admin/;
+    const withError = parseRefreshResponse(200, { data: { refreshAuthToken: { authKey: null, refreshKey: null, authExpiry: null, status: 401, error: 'Invalid refresh token' } } });
+    assert.equal(withError.ok, false);
+    assert.equal(withError.kind, 'auth');
+    assert.match(withError.message, signIn);
+    assert.match(withError.message, /Invalid refresh token/);
+    assert.equal(parseRefreshResponse(200, { data: { refreshAuthToken: { authKey: '', error: null } } }).kind, 'auth');
+    assert.equal(parseRefreshResponse(401, null).kind, 'auth');
+    assert.equal(parseRefreshResponse(200, { errors: [{ message: 'Unauthorized' }] }).kind, 'auth');
+    assert.equal(parseRefreshResponse(200, { errors: [{ message: 'Something broke' }] }).kind, 'milkbasket');
+    assert.deepEqual(parseRefreshResponse(503, null).retryable, true);
+    // Milkbasket may keep the same refresh token: then the old one is kept.
+    const sameRefresh = parseRefreshResponse(200, { data: { refreshAuthToken: { authKey: 'NEW-AUTH-KEY-0123456789==', refreshKey: null, authExpiry: 'soon' } } });
+    assert.deepEqual(sameRefresh, { ok: true, authKey: 'NEW-AUTH-KEY-0123456789==', refreshKey: null, expiresInMinutes: null });
+});
+
+test('a refused login token is told apart, so the server can renew and retry', async () => {
+    const refused = mockFetch([{ status: 401, body: { errors: [{ message: 'Session expired' }] } }]);
+    const err = await fetchOrders(deps(refused.fetch)).then(() => null, e => e);
+    assert.equal(isAuthError(err), true);
+    assert.match(err.message, /HTTP 401: Session expired/);
+    const other = await fetchOrders(deps(mockFetch([{ status: 500, body: '' }]).fetch)).then(() => null, e => e);
+    assert.equal(isAuthError(other), false);
+    // addToBasket reports kind 'auth' (nothing was added), with Milkbasket's reason.
+    const add = parseAddResponse(401, { errors: [{ message: 'Session expired' }] });
+    assert.equal(add.kind, 'auth');
+    assert.match(add.message, /HTTP 401: Session expired/);
+});
+
+test('secrets in the database: encrypted, tamper-proof, tied to the key', () => {
+    const key = secretKey('a-long-session-secret-for-tests-only-1234', 'milkbasket-tokens');
+    const other = secretKey('a-different-session-secret-for-tests-5678', 'milkbasket-tokens');
+    const token = '+2Hs/example+token==';
+    const box = seal(token, key);
+    assert.match(box, /^v1\./);
+    assert.doesNotMatch(box, /example/);
+    assert.notEqual(seal(token, key), box); // a fresh nonce each time
+    assert.equal(unseal(box, key), token);
+    assert.equal(unseal(box, other), null);
+    const tampered = box.slice(0, -2) + (box.endsWith('A') ? 'B' : 'A') + box.slice(-1);
+    assert.equal(unseal(tampered, key), null);
+    assert.equal(unseal('plain text', key), null);
+    assert.equal(unseal(undefined, key), null);
+    // A different purpose gives a different key.
+    assert.equal(unseal(box, secretKey('a-long-session-secret-for-tests-only-1234', 'session')), null);
+    assert.equal(fingerprint('a'), fingerprint('a'));
+    assert.notEqual(fingerprint('a'), fingerprint('b'));
+    assert.equal(fingerprint(token).includes('example'), false);
 });
 
 /* ─── Order history ──────────────────────────────────────────────────── */
