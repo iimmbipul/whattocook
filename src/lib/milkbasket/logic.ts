@@ -150,7 +150,7 @@ export interface RequestSummary {
 }
 
 /** Why a request got its status, shown in the admin panel. */
-export type Reason = 'unmapped' | 'price-unknown' | 'over-limit' | 'under-limit' | 'auto-off' | 'item-off' | 'approved';
+export type Reason = 'unmapped' | 'price-unknown' | 'over-limit' | 'under-limit' | 'auto-off' | 'item-off' | 'approved' | 'manual';
 
 export type Decision =
     | { action: 'none'; why: 'off' | 'open-request' | 'recently-added' | 'item-off' }
@@ -627,4 +627,100 @@ export function searchHistory(products: HistoryProduct[], query: string): Histor
         const hay = `${p.name} ${p.size} ${p.productId}`.toLowerCase();
         return words.every(w => hay.includes(w));
     });
+}
+
+/* ─── The Milkbasket basket (what is in the cart for the next delivery) ─ */
+
+export const GET_BASKET_QUERY = `query getExtendedBasket($basketId: Float, $isOtdf: Float) {
+  getExtendedBasket(basketId: $basketId, isOtdf: $isOtdf) {
+    basket {
+      id date quantity saving total
+      data {
+        key title type
+        data {
+          product {
+            id name
+            weight { text }
+            price { price { amount value } mrp { amount value } }
+            order { productId quantity }
+          }
+        }
+      }
+      billDetails { subTotalAmount totalAmount deliveryFeeAmount payableAmount subSavingsAmount }
+    }
+  }
+}`;
+
+export interface BasketProduct {
+    productId: number;
+    name: string;
+    size: string;
+    quantity: number;
+    /** ₹ per unit, if Milkbasket said. */
+    price: number | null;
+}
+
+export interface BasketView {
+    id: number | null;
+    /** The delivery date the basket is for, YYYY-MM-DD as Milkbasket sends it. */
+    date: string;
+    products: BasketProduct[];
+    /** Amounts in ₹ from billDetails, when present. */
+    subTotal: number | null;
+    deliveryFee: number | null;
+    savings: number | null;
+    payable: number | null;
+}
+
+const amount = (v: unknown): number | null => {
+    const n = typeof v === 'string' ? Number(v.replace(/[^\d.]/g, '')) : v;
+    return typeof n === 'number' && Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+};
+
+/** `data.getExtendedBasket.basket` → the products in it (every group), one row per product. */
+export function parseBasket(body: unknown): BasketView | null {
+    const data = isObject(body) && isObject(body.data) ? body.data : null;
+    const extended = data && isObject(data.getExtendedBasket) ? data.getExtendedBasket : null;
+    const basket = extended && isObject(extended.basket) ? extended.basket : null;
+    if (!basket) return null;
+    const products = new Map<number, BasketProduct>();
+    const groups = Array.isArray(basket.data) ? basket.data : [];
+    for (const group of groups) {
+        const entries = isObject(group) && Array.isArray(group.data) ? group.data : [];
+        for (const entry of entries) {
+            const p = isObject(entry) && isObject(entry.product) ? entry.product : null;
+            const order = p && isObject(p.order) ? p.order : null;
+            const productId = order ? Number(order.productId) : NaN;
+            if (!p || !isProductId(productId)) continue;
+            const quantity = typeof order!.quantity === 'number' && order!.quantity > 0 ? order!.quantity : 0;
+            const priceObj = isObject(p.price) && isObject(p.price.price) ? p.price.price : null;
+            const existing = products.get(productId);
+            if (existing) {
+                existing.quantity += quantity;
+                continue;
+            }
+            products.set(productId, {
+                productId,
+                name: text(p.name).slice(0, 120) || `Product ${productId}`,
+                size: isObject(p.weight) ? text(p.weight.text).slice(0, 40) : '',
+                quantity,
+                price: cleanPrice(priceObj ? priceObj.value : null),
+            });
+        }
+    }
+    const bill = isObject(basket.billDetails) ? basket.billDetails : {};
+    return {
+        id: typeof basket.id === 'number' ? basket.id : null,
+        date: text(basket.date).slice(0, 20),
+        products: [...products.values()].filter(p => p.quantity > 0),
+        subTotal: amount(bill.subTotalAmount),
+        deliveryFee: amount(bill.deliveryFeeAmount),
+        savings: amount(bill.subSavingsAmount),
+        payable: amount(bill.payableAmount) ?? amount(basket.total),
+    };
+}
+
+/** What is in the Milkbasket basket now (getExtendedBasket). Read-only. */
+export async function fetchBasket(deps: MilkbasketDeps): Promise<BasketView | null> {
+    return parseBasket(await readQuery(deps, 'getExtendedBasket', GET_BASKET_QUERY, {}));
 }

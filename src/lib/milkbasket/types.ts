@@ -1,4 +1,4 @@
-import type { HistoryProduct, MilkbasketSettings, ProductMapping, Reason, RequestStatus } from './logic';
+import type { BasketView, HistoryProduct, MilkbasketSettings, ProductMapping, Reason, RequestStatus } from './logic';
 
 /** One purchase request as the admin panel shows it. Times are ms since epoch. */
 export interface PurchaseRequestRow {
@@ -92,3 +92,32 @@ export type MilkbasketError =
 export type MilkbasketResult<T = undefined> =
     | ({ ok: true } & (T extends undefined ? object : { data: T }))
     | { ok: false; error: MilkbasketError; message?: string };
+
+/** One pantry item's Milkbasket state, for the Groceries list. */
+export interface MilkbasketItemState {
+    /** The product it orders, or null if it isn't mapped yet. */
+    product: { milkbasketProductId: number; productName: string; size: string; price: number | null; defaultQuantity: number } | null;
+    /** Its open request (waiting, being added), if any. */
+    openStatus: RequestStatus | null;
+    /** When it was last added to the basket, within the duplicate window. */
+    addedAt: number | null;
+}
+
+/** GET /api/milkbasket: what owners and members see on the Groceries page. */
+export interface MilkbasketHouseholdView {
+    /** This household can use Milkbasket and the server is set up. Nothing else is filled when false. */
+    available: boolean;
+    today: string;
+    /** The date new adds are for (tomorrow by default). */
+    deliveryDate: string;
+    priceLimit: number;
+    approvals: PurchaseRequestRow[];
+    /** By pantry item id: mapped items and items with an open or recent request. */
+    items: Record<string, MilkbasketItemState>;
+}
+
+/** GET /api/milkbasket/basket */
+export interface BasketResult {
+    basket: BasketView | null;
+    fetchedAtMs: number;
+}

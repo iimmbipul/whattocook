@@ -14,6 +14,7 @@ import { Segmented } from '@/components/ui/Segmented';
 import { JarIcon } from '@/components/grocery/LevelPicker';
 import { GrocerySearch, InventoryList, useGroceryMarking } from '@/components/grocery/GroceryMarking';
 import { useGroceryView } from '@/components/grocery/useGroceryView';
+import { MilkbasketApprovals, MilkbasketBasket, MilkbasketRowButton, MilkbasketRowStatus, useMilkbasket } from '@/components/milkbasket/MilkbasketGroceries';
 import { markGroceriesRestocked } from '@/lib/grocery/actions';
 import { groceryDayLabel, itemName, refreshGroceryView, reportedAgo } from '@/lib/grocery/client';
 import type { StockLevel } from '@/lib/grocery/logic';
@@ -34,7 +35,9 @@ export default function GroceriesPage() {
     const { t, locale } = useLocale();
     const view = useGroceryView(user?.uid);
     const marking = useGroceryMarking(user?.uid ?? '');
-    const [tab, setTab] = useState<'list' | 'inventory'>('list');
+    // Milkbasket is for the owner and members; the cook doesn't see it.
+    const mb = useMilkbasket(user?.role === 'user' || user?.role === 'member');
+    const [tab, setTab] = useState<'list' | 'inventory' | 'milkbasket'>('list');
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState('');
 
@@ -99,6 +102,8 @@ export default function GroceriesPage() {
                 <>
                     <GrocerySearch view={view} marking={marking} />
                     {marking.notice && <Alert tone={marking.notice.tone} className="mb-4">{marking.notice.text}</Alert>}
+                    {mb.notice && <Alert tone={mb.notice.tone} className="mb-4">{mb.notice.text}</Alert>}
+                    <MilkbasketApprovals mb={mb} uid={user.uid} />
                     <Segmented
                         label={t('grocery.tabs.label')}
                         value={tab}
@@ -107,9 +112,12 @@ export default function GroceriesPage() {
                         options={[
                             { value: 'list', label: t('grocery.tabs.toBuy', { count: view.list.length }) },
                             { value: 'inventory', label: t('grocery.tabs.inventory', { count: view.pantry.filter(r => r.active).length }) },
+                            ...(mb.view?.available ? [{ value: 'milkbasket' as const, label: t('milkbasket.member.tab') }] : []),
                         ]}
                     />
-                    {tab === 'inventory' ? (
+                    {tab === 'milkbasket' && mb.view?.available ? (
+                        <MilkbasketBasket mb={mb} />
+                    ) : tab === 'inventory' ? (
                         <InventoryList view={view} marking={marking} />
                     ) : view.list.length === 0 ? (
                 <Card>
@@ -148,12 +156,14 @@ export default function GroceriesPage() {
                                                         {t('grocery.neededFor', { day: groceryDayLabel(row.neededOn, view.today, t, locale), dishes: row.dishes.join(', ') })}
                                                     </p>
                                                 )}
+                                                <MilkbasketRowStatus row={row} mb={mb} />
                                                 {row.reportedByName && (
                                                     <p className="text-xs text-ink-muted">
                                                         {t('grocery.list.reportedBy', { name: row.reportedByName, when: reportedAgo(row.levelAtMs, t, locale) })}
                                                     </p>
                                                 )}
                                             </div>
+                                            <MilkbasketRowButton row={row} mb={mb} uid={user.uid} />
                                             <Button
                                                 variant="secondary"
                                                 size="sm"

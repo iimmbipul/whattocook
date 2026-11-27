@@ -11,8 +11,11 @@ import { actorFromUser } from '../actor';
 import { localTime } from '../ratings/logic';
 import * as M from '../milkbasket/logic';
 import type {
+    BasketResult,
     MappingRow,
     MilkbasketAdminView,
+    MilkbasketHouseholdView,
+    MilkbasketItemState,
     MilkbasketResult,
     OrderHistoryResult,
     PurchaseRequestRow,
@@ -47,6 +50,7 @@ const guardsPath = (hid: string) => `households/${hid}/milkbasket_items`;
 const settingsPath = (hid: string) => `households/${hid}/settings/milkbasket`;
 const workerPath = (hid: string) => `households/${hid}/settings/milkbasket_worker`;
 const historyPath = (hid: string) => `households/${hid}/settings/milkbasket_history`;
+const basketPath = (hid: string) => `households/${hid}/settings/milkbasket_basket`;
 
 const LEASE_MS = 2 * 60_000;
 /** An add still "adding" after this long was cut off before Milkbasket answered. */
@@ -129,7 +133,7 @@ function readMapping(itemId: string, data: DocumentData | undefined): M.ProductM
     };
 }
 
-const REASONS: readonly M.Reason[] = ['unmapped', 'price-unknown', 'over-limit', 'under-limit', 'auto-off', 'item-off', 'approved'];
+const REASONS: readonly M.Reason[] = ['unmapped', 'price-unknown', 'over-limit', 'under-limit', 'auto-off', 'item-off', 'approved', 'manual'];
 
 function readRequest(id: string, data: DocumentData): PurchaseRequestRow {
     const trigger = data.trigger && typeof data.trigger === 'object' ? data.trigger : null;
@@ -194,7 +198,7 @@ async function notifyOwner(fs: Fs, hid: string, kind: 'review' | 'added' | 'fail
             actorName: 'Milkbasket',
             date: null,
             mealType: null,
-            payload: { kind, items: [...new Set(names)].slice(0, 10).join(', '), count: names.length, audience: 'owner' },
+            payload: { kind, items: [...new Set(names)].slice(0, 10).join(', '), count: names.length, audience: 'members' },
             createdAt: FieldValue.serverTimestamp(),
             readBy: [],
         });
@@ -415,6 +419,7 @@ async function processRequest(fs: Fs, hid: string, job: { ref: DocumentReference
         attempts: FieldValue.increment(outcome.attempts),
     }, ['adding']);
     await setProblem(fs, hid, null);
+    await fs.doc(basketPath(hid)).delete().catch(() => {}); // the basket changed: read it fresh next time
     const bought = await restockFromBasket(hid, req.pantryItemId, { requestId: req.id, productName: req.productName ?? '' }).catch(err => {
         console.error('[milkbasket] marking bought failed:', err instanceof Error ? err.message : err);
         return false;
@@ -556,6 +561,15 @@ function guardOwner(user: User): { ok: false; error: 'forbidden' | 'not-allowed'
     return null;
 }
 
+/** The owner or a household member (not the cook): may approve, reject and add items by hand. */
+const validMember = (user: User) => (user.role === 'user' || user.role === 'member') && isSafeDocId(user.uid) && isSafeDocId(user.householdId);
+
+function guardMember(user: User): { ok: false; error: 'forbidden' | 'not-allowed' } | null {
+    if (!validMember(user)) return { ok: false, error: 'forbidden' };
+    if (!isMilkbasketHousehold(user.householdId)) return { ok: false, error: 'not-allowed' };
+    return null;
+}
+
 async function requestRow(fs: Fs, hid: string, id: string): Promise<PurchaseRequestRow | null> {
     const snap = await fs.doc(`${requestsPath(hid)}/${id}`).get();
     return snap.exists ? readRequest(snap.id, snap.data()!) : null;
@@ -667,7 +681,7 @@ export async function setMappingEnabled(user: User, itemId: unknown, enabled: un
  * on success, the pantry item is marked bought.
  */
 export async function approveRequest(user: User, requestId: unknown, quantity: unknown, price: unknown): Promise<MilkbasketResult<PurchaseRequestRow>> {
-    const denied = guardOwner(user);
+    const denied = guardMember(user);
     if (denied) return denied;
     if (!isSafeDocId(requestId)) return { ok: false, error: 'invalid' };
     const fs = adminFirestore();
@@ -707,7 +721,7 @@ export async function approveRequest(user: User, requestId: unknown, quantity: u
 
 /** Reject a waiting approval, or dismiss a request waiting for a mapping. */
 export async function rejectRequest(user: User, requestId: unknown): Promise<MilkbasketResult> {
-    const denied = guardOwner(user);
+    const denied = guardMember(user);
     if (denied) return denied;
     if (!isSafeDocId(requestId)) return { ok: false, error: 'invalid' };
     const fs = adminFirestore();
@@ -801,7 +815,7 @@ export async function testConnection(user: User): Promise<MilkbasketResult<{ mes
  * pick a mapping from. Cached for an hour; `refresh` fetches again.
  */
 export async function getOrderHistory(user: User, refresh: unknown): Promise<MilkbasketResult<OrderHistoryResult>> {
-    const denied = guardOwner(user);
+    const denied = guardMember(user);
     if (denied) return denied;
     const fs = adminFirestore();
     const ref = fs.doc(historyPath(user.householdId));
@@ -846,4 +860,176 @@ export async function getOrderHistory(user: User, refresh: unknown): Promise<Mil
         if (cachedResult && refresh !== true) return { ok: true, data: cachedResult };
         return { ok: false, error: 'milkbasket', message };
     }
+}
+
+/* ─── Owners and members: the Groceries page ─────────────────────────── */
+
+const BASKET_TTL_MS = 3 * 60_000;
+
+/** Approvals, and each item's Milkbasket state for the Groceries list. Owners and members only. */
+export async function getHouseholdMilkbasketView(user: User, now: Date = new Date()): Promise<MilkbasketHouseholdView | null> {
+    if (!validMember(user)) return null;
+    const hid = user.householdId;
+    const today = localTime(now).date;
+    const empty: MilkbasketHouseholdView = { available: false, today, deliveryDate: M.deliveryDate(today), priceLimit: defaultPriceLimit(), approvals: [], items: {} };
+    if (!isMilkbasketHousehold(hid) || !milkbasketConfig().deps) return empty;
+
+    const fs = adminFirestore();
+    const [settings, mappingSnap, openSnap, recentSnap] = await Promise.all([
+        readSettings(fs, hid),
+        fs.collection(mappingsPath(hid)).get(),
+        fs.collection(requestsPath(hid)).where('status', 'in', [...M.OPEN_STATUSES]).get(),
+        fs.collection(requestsPath(hid)).orderBy('createdAt', 'desc').limit(ACTIVITY_LIMIT).get(),
+    ]);
+    const items: Record<string, MilkbasketItemState> = {};
+    const state = (id: string) => (items[id] ??= { product: null, openStatus: null, addedAt: null });
+    mappingSnap.docs.forEach(d => {
+        const m = readMapping(d.id, d.data());
+        if (m) state(d.id).product = { milkbasketProductId: m.milkbasketProductId, productName: m.productName, size: m.size, price: m.price, defaultQuantity: m.defaultQuantity };
+    });
+    const open = openSnap.docs.map(d => readRequest(d.id, d.data()));
+    open.forEach(r => { state(r.pantryItemId).openStatus = r.status; });
+    const since = now.getTime() - settings.duplicateWindowHours * 3_600_000;
+    recentSnap.docs.map(d => readRequest(d.id, d.data())).forEach(r => {
+        if (r.status === 'added' && r.addedAt !== null && r.addedAt > since) {
+            const s = state(r.pantryItemId);
+            s.addedAt = Math.max(s.addedAt ?? 0, r.addedAt);
+        }
+    });
+    return {
+        available: true,
+        today,
+        deliveryDate: M.deliveryDate(today, settings.deliveryDays),
+        priceLimit: settings.priceLimit,
+        approvals: open.filter(r => r.status === 'pending_approval').sort((a, b) => a.createdAt - b.createdAt),
+        items,
+    };
+}
+
+/** What is in the Milkbasket basket now, cached for a few minutes; `refresh` reads it again. */
+export async function getBasket(user: User, refresh: unknown): Promise<MilkbasketResult<BasketResult>> {
+    const denied = guardMember(user);
+    if (denied) return denied;
+    const fs = adminFirestore();
+    const ref = fs.doc(basketPath(user.householdId));
+    const cached = (await ref.get()).data();
+    const fetchedAtMs = num(cached?.fetchedAtMs) ?? 0;
+    if (cached && refresh !== true && Date.now() - fetchedAtMs < BASKET_TTL_MS) {
+        return { ok: true, data: { basket: (cached.basket ?? null) as BasketResult['basket'], fetchedAtMs } };
+    }
+    const config = milkbasketConfig();
+    if (!config.deps) return { ok: false, error: 'milkbasket', message: notConfigured(config.missing) };
+    try {
+        const basket = await M.fetchBasket(config.deps);
+        const result: BasketResult = { basket, fetchedAtMs: Date.now() };
+        await ref.set(result);
+        return { ok: true, data: result };
+    } catch (err) {
+        return { ok: false, error: 'milkbasket', message: err instanceof Error ? err.message : 'Milkbasket is not reachable.' };
+    }
+}
+
+export interface ManualAddInput {
+    itemId: string;
+    quantity: number;
+    /** Needed only when the item has no mapping yet: the product picked from recent orders. Saved as its mapping. */
+    product?: { milkbasketProductId: number; productName: string; size?: string; price: number | null } | null;
+    /** Needed only when the mapping has no known price. */
+    price?: number | null;
+}
+
+/**
+ * Someone in the household adds an item to the Milkbasket basket by hand. It
+ * is their own decision, so no approval is needed; an item waiting for approval
+ * or a mapping is added through that same request. Refused when it is already
+ * being added or was added within the duplicate window.
+ */
+export async function addManually(user: User, input: unknown): Promise<MilkbasketResult<PurchaseRequestRow>> {
+    const denied = guardMember(user);
+    if (denied) return denied;
+    if (!input || typeof input !== 'object') return { ok: false, error: 'invalid' };
+    const r = input as Record<string, unknown>;
+    if (!isSafeDocId(r.itemId)) return { ok: false, error: 'invalid' };
+    const quantity = M.cleanQuantity(r.quantity, 0);
+    if (quantity === 0) return { ok: false, error: 'invalid' };
+    const itemId = r.itemId;
+    let picked: M.ProductMapping | null = null;
+    if (r.product && typeof r.product === 'object') {
+        const p = r.product as Record<string, unknown>;
+        const productId = typeof p.milkbasketProductId === 'string' ? Number(p.milkbasketProductId) : p.milkbasketProductId;
+        const productName = text(p.productName, 120);
+        if (!M.isProductId(productId) || !productName) return { ok: false, error: 'invalid' };
+        picked = { itemId, milkbasketProductId: productId, productName, size: text(p.size, 40), price: M.cleanPrice(p.price), defaultQuantity: quantity, priceUpdatedAt: null, enabled: true };
+    }
+    const givenPrice = M.cleanPrice(r.price);
+
+    const hid = user.householdId;
+    const fs = adminFirestore();
+    const item = (await listPantryItems(hid)).find(p => p.itemId === itemId);
+    if (!item) return { ok: false, error: 'not-found' };
+    const settings = await readSettings(fs, hid);
+    const nowMs = Date.now();
+    type Step = { error: 'unmapped' | 'price-needed' | 'duplicate'; message?: string } | { requestId: string };
+    const step: Step = await fs.runTransaction(async (tx): Promise<Step> => {
+        const guard = fs.doc(`${guardsPath(hid)}/${itemId}`);
+        const mappingRef = fs.doc(`${mappingsPath(hid)}/${itemId}`);
+        const [, mappingSnap, requestSnap] = await Promise.all([
+            tx.get(guard),
+            tx.get(mappingRef),
+            tx.get(fs.collection(requestsPath(hid)).where('pantryItemId', '==', itemId)),
+        ]);
+        const saved = readMapping(itemId, mappingSnap.data());
+        const mapping = saved ?? picked;
+        if (!mapping) return { error: 'unmapped' };
+        const price = mapping.price ?? givenPrice;
+        if (price === null) return { error: 'price-needed' };
+        const requests = requestSnap.docs.map(d => readRequest(d.id, d.data()));
+        if (requests.some(q => q.status === 'queued' || q.status === 'adding')) {
+            return { error: 'duplicate', message: 'It is already being added to the basket.' };
+        }
+        if (M.addedRecently(requests.map(summary), nowMs, settings.duplicateWindowHours)) {
+            return { error: 'duplicate', message: `It was added to the basket in the last ${settings.duplicateWindowHours} hours.` };
+        }
+        const fields = {
+            ...productFields({ ...mapping, price }),
+            quantity,
+            approved: true,
+            reason: 'manual' as M.Reason,
+            errorMessage: null,
+            ...deciderFields(user, nowMs),
+        };
+        const note = `Added by hand: ${quantity} × ₹${price}`;
+        const waiting = requests.find(q => q.status === 'pending_approval' || q.status === 'needs_mapping');
+        let requestId: string;
+        if (waiting) {
+            tx.update(fs.doc(`${requestsPath(hid)}/${waiting.id}`), statusUpdate('queued', nowMs, note, fields));
+            requestId = waiting.id;
+        } else {
+            const ref = fs.collection(requestsPath(hid)).doc();
+            tx.set(ref, {
+                id: ref.id,
+                pantryItemId: itemId,
+                itemName: item.en.slice(0, 80),
+                ...fields,
+                status: 'queued',
+                deliveryDate: null,
+                createdAt: nowMs,
+                updatedAt: nowMs,
+                addedAt: null,
+                attempts: 0,
+                trigger: null,
+                history: [{ status: 'queued', at: nowMs, note }],
+            });
+            requestId = ref.id;
+        }
+        // Remember the product picked for an unmapped item, and a price typed for an unpriced one.
+        if (!saved && picked) tx.set(mappingRef, { ...picked, price, priceUpdatedAt: nowMs, updatedAtMs: nowMs, updatedBy: user.uid });
+        else if (saved && saved.price === null) tx.update(mappingRef, { price, priceUpdatedAt: nowMs });
+        tx.set(guard, { lastRequestId: requestId, updatedAtMs: nowMs }, { merge: true });
+        return { requestId };
+    });
+    if ('error' in step) return { ok: false, error: step.error, message: step.message };
+    await runWorker(hid);
+    const row = await requestRow(fs, hid, step.requestId);
+    return row ? { ok: true, data: row } : { ok: false, error: 'failed' };
 }

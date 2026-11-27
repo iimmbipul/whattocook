@@ -64,8 +64,14 @@ export function useNotifications(householdId: string | undefined, currentUserId:
                                 } satisfies NotificationDoc;
                             })
                             .filter(n => n.actorId !== currentUserId)
-                            // Owner-only notifications (Milkbasket) are hidden from members and the cook.
-                            .filter(n => n.payload?.audience !== 'owner' || role === 'user');
+                            // Some notifications are for part of the household: 'owner' only,
+                            // or 'members' (the owner and members, e.g. Milkbasket; not the cook).
+                            .filter(n => {
+                                const audience = n.payload?.audience;
+                                if (audience === 'owner') return role === 'user';
+                                if (audience === 'members') return role === 'user' || role === 'member';
+                                return true;
+                            });
 
                         setNotifications(docs);
                         setLoading(false);

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
     ADD_TO_BASKET_MUTATION, CANCEL_ON_OK, DEFAULT_API_URL, MAX_RETRIES, OPEN_STATUSES, RETRY_DELAYS_MS,
     addToBasket, addToBasketPayload, canMove, cleanSettings, cleanToken, decideOnLow, defaultSettings, deliveryDate,
+    GET_BASKET_QUERY, fetchBasket, parseBasket,
     fetchOrderDetail, fetchOrders, isBackToOk, isOrderTrigger, mergeHistory, milkbasketHeaders, parseAddResponse,
     parseOrderDetail, parseOrders, priceLimitFromEnv, routeMapped, searchHistory, tokenExpiry,
 } from '../src/lib/milkbasket/logic.ts';
@@ -297,6 +298,69 @@ test('token: "Bearer " is stripped, unusable values rejected, JWT expiry read', 
     assert.equal(tokenExpiry('not-a-jwt-token-value'), null);
     assert.equal(milkbasketHeaders({ token: TOKEN, cityId: '1', hubId: '2', appVersion: '9.1.0.3' }).binaryversion, '9.1.0');
     assert.equal(DEFAULT_API_URL, 'https://consumerbff.milkbasket.com/graphql');
+});
+
+/* ─── The Milkbasket basket ──────────────────────────────────────────── */
+
+// Shaped like Milkbasket's getExtendedBasket answer (trimmed).
+const basketBody = {
+    data: {
+        getExtendedBasket: {
+            basket: {
+                id: 463396538,
+                date: '2026-11-28',
+                quantity: 1,
+                saving: '13.00',
+                total: '102.00',
+                data: [
+                    {
+                        key: 'cartProducts',
+                        title: '',
+                        type: 1,
+                        data: [
+                            { product: { id: 76555, name: 'Jabsons Khari Sing Salted Peanut', weight: { text: '200 GM' }, price: { price: { amount: '87', value: 87 }, mrp: { amount: '100', value: 100 } }, order: { productId: 76555, quantity: 1 } } },
+                            { product: { id: 45657, name: 'Amul Taaza Milk', weight: { text: '500 ML' }, price: { price: { amount: '29', value: 29 } }, order: { productId: 45657, quantity: 2 } } },
+                            { product: { id: 1, name: 'Broken line', order: { productId: null, quantity: 1 } } },
+                        ],
+                    },
+                    { key: 'subscriptions', data: [{ product: { name: 'Amul Taaza Milk', order: { productId: 45657, quantity: 1 }, price: { price: { value: 29 } } } }] },
+                ],
+                billDetails: { subTotalAmount: 100, totalAmount: 102, deliveryFeeAmount: 15, payableAmount: 87, subSavingsAmount: 13 },
+            },
+        },
+    },
+};
+
+test('basket: products from every group, one row per product, with the bill', () => {
+    const basket = parseBasket(basketBody);
+    assert.equal(basket.id, 463396538);
+    assert.equal(basket.date, '2026-11-28');
+    assert.deepEqual(basket.products, [
+        { productId: 76555, name: 'Jabsons Khari Sing Salted Peanut', size: '200 GM', quantity: 1, price: 87 },
+        { productId: 45657, name: 'Amul Taaza Milk', size: '500 ML', quantity: 3, price: 29 },
+    ]);
+    assert.equal(basket.subTotal, 100);
+    assert.equal(basket.deliveryFee, 15);
+    assert.equal(basket.savings, 13);
+    assert.equal(basket.payable, 87);
+    assert.equal(parseBasket({ data: { getExtendedBasket: { basket: null } } }), null);
+    assert.equal(parseBasket(null), null);
+    // Amounts sent as text ("₹ 87.00") still read.
+    const textBill = parseBasket({ data: { getExtendedBasket: { basket: { date: '2026-11-28', data: [], total: '₹ 102.00', billDetails: {} } } } });
+    assert.equal(textBill.payable, 102);
+    assert.deepEqual(textBill.products, []);
+});
+
+test('basket: getExtendedBasket is a read-only query with the same headers', async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: basketBody }]);
+    const basket = await fetchBasket(deps(fetch));
+    assert.equal(basket.products.length, 2);
+    assert.equal(calls[0].body.operationName, 'getExtendedBasket');
+    assert.equal(calls[0].body.query, GET_BASKET_QUERY);
+    assert.deepEqual(calls[0].body.variables, {});
+    assert.equal(calls[0].init.headers.authorization, `Bearer ${TOKEN}`);
+    const refused = mockFetch([{ status: 200, body: { errors: [{ message: 'Unauthorized' }] } }]);
+    await assert.rejects(fetchBasket(deps(refused.fetch)), /login token/);
 });
 
 /* ─── Order history ──────────────────────────────────────────────────── */

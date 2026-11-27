@@ -177,6 +177,14 @@ When a pantry item drops to **Quarter** (low) or **Empty**, the app can add it t
 
 **The token expires.** Admin → Milkbasket shows when it does, warns three days before, and shows a banner once it has expired or Milkbasket refuses it. Until you put a fresh token in `MILKBASKET_TOKEN` and redeploy, adds fail and nothing is marked bought.
 
+### On the Groceries page (owner and members)
+
+Everyone in the household except the cook sees Milkbasket on **Groceries**:
+
+- **Waiting for an OK**: items at or above the price limit, or with no known price. Anyone can change the quantity and Approve or Reject; Admin is not needed.
+- **Cart button** on each item in the shopping list: adds it to the Milkbasket basket now, with a quantity you choose, and marks it bought. If the item isn't linked to a product yet, pick one from your recent orders; it is remembered for next time. Items already in the basket or being added show that instead.
+- **Milkbasket tab**: what is in the Milkbasket basket for the next delivery, with the bill. It is read with `getExtendedBasket` and cached for 3 minutes; **Refresh** reads it again. Change quantities or remove items in the Milkbasket app.
+
 ### Mapping items
 
 - **To map** lists pantry items with no Milkbasket product. Items that just ran low are at the top.

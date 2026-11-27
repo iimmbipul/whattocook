@@ -216,7 +216,7 @@
         "respChanged": "{{actor}} reassigned {{slot}} to {{toName}}",
         "respBulkChanged": "{{actor}} updated cooking duties on {{count}} days",
         "groceryOut": "{{actor}} reported out of stock: {{items}}",
-        "milkbasketReview": "Milkbasket needs you: {{items}}",
+        "milkbasketReview": "Milkbasket needs an OK: {{items}}",
         "milkbasketAdded": "Added to Milkbasket: {{items}}",
         "milkbasketFailed": "Milkbasket couldn’t add: {{items}}"
     },
@@ -610,7 +610,8 @@
             "item-off": "Auto-order is off for this item",
             "under-limit": "Below your ₹{{limit}} limit",
             "unmapped": "Not mapped to a Milkbasket product",
-            "approved": "Approved"
+            "approved": "Approved",
+            "manual": "Added by hand"
         },
         "map": {
             "intro": "Pantry items with no Milkbasket product. Items that just ran low are at the top: mapping one moves its request on.",
@@ -712,6 +713,36 @@
         },
         "notConfigured": "Milkbasket isn’t set up on the server yet. Add {{missing}} to the environment variables (in Vercel: Settings → Environment Variables) and redeploy.",
         "tokenExpired": "The Milkbasket login token expired {{when}}. Put a fresh one in MILKBASKET_TOKEN and redeploy; until then nothing can be added.",
-        "tokenExpiring": "The Milkbasket login token expires {{when}}. Put a fresh one in MILKBASKET_TOKEN before then."
+        "tokenExpiring": "The Milkbasket login token expires {{when}}. Put a fresh one in MILKBASKET_TOKEN before then.",
+        "member": {
+            "tab": "Milkbasket",
+            "approvalsTitle": "Milkbasket: waiting for an OK ({{count}})",
+            "approvalsIntro": "Priced at or above ₹{{limit}}, or with no known price. Anyone in the house can approve.",
+            "addAria": "Add {{name}} to Milkbasket",
+            "inBasket": "In Milkbasket basket · {{when}}",
+            "adding": "Adding to Milkbasket…",
+            "waiting": "Milkbasket: waiting for an OK",
+            "dialogTitle": "Add {{name}} to Milkbasket",
+            "pickProduct": "This item isn’t linked to a Milkbasket product yet. Pick it from your recent orders; it will be remembered next time.",
+            "forDate": "delivery {{day}}",
+            "confirm": "Add to basket",
+            "added": "{{item}} added to the Milkbasket basket for {{day}}, and marked bought.",
+            "queued": "{{item}} will be added to the Milkbasket basket in a moment.",
+            "failed": "Milkbasket didn’t add {{item}}: {{message}}",
+            "basketTitle": "Milkbasket basket for {{day}}",
+            "basketTitlePlain": "Milkbasket basket",
+            "basketUpdated": "Updated {{when}}",
+            "basketEmpty": "Nothing in the Milkbasket basket yet.",
+            "basketFailed": "Couldn’t load the Milkbasket basket: {{message}}",
+            "basketHint": "To change quantities or remove items, use the Milkbasket app.",
+            "refresh": "Refresh",
+            "each": "{{qty}} × ₹{{price}}",
+            "qty": "qty {{qty}}",
+            "subtotal": "Items",
+            "savings": "You save",
+            "deliveryFee": "Delivery fee",
+            "free": "Free",
+            "payable": "To pay"
+        }
     }
 }
