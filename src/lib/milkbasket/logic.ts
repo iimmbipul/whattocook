@@ -95,9 +95,31 @@ export interface ProductMapping {
     priceUpdatedAt: number | null;
     /** Auto-order on or off for this item. */
     enabled: boolean;
+    /** The product picture on Milkbasket's CDN, or '' if none is known. */
+    imageUrl: string;
 }
 
 export const MAX_QUANTITY = 20;
+
+const IMAGE_HOSTS = /(^|\.)(jio\.com|milkbasket\.com)$/i;
+
+/** A product picture URL from Milkbasket (https, on its CDN); '' for anything else. */
+export function cleanImageUrl(value: unknown): string {
+    if (typeof value !== 'string' || value.length > 600) return '';
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && IMAGE_HOSTS.test(url.hostname) ? url.toString() : '';
+    } catch {
+        return '';
+    }
+}
+
+/** The picture in a Milkbasket product's `assets.image.url`, if any. */
+function productImage(product: Record<string, unknown>): string {
+    const assets = isObject(product.assets) ? product.assets : null;
+    const image = assets && isObject(assets.image) ? assets.image : null;
+    return image ? cleanImageUrl(image.url) : '';
+}
 
 export function isProductId(value: unknown): value is number {
     return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -595,6 +617,7 @@ export interface HistoryProduct {
     lastOrdered: string;
     /** How many of the fetched orders it was in. */
     orders: number;
+    imageUrl: string;
 }
 
 /** `data.getOrderDetail.data[].data[]` → products. The order-line `id` is ignored; `order.productId` is the product. */
@@ -618,6 +641,7 @@ export function parseOrderDetail(body: unknown, orderDate: string): HistoryProdu
                 price: cleanPrice(priceObj ? priceObj.value : null),
                 lastOrdered: orderDate,
                 orders: 1,
+                imageUrl: productImage(line),
             });
         }
     }
@@ -662,6 +686,7 @@ export const GET_BASKET_QUERY = `query getExtendedBasket($basketId: Float, $isOt
           product {
             id name
             weight { text }
+            assets { image { url } }
             price { price { amount value } mrp { amount value } }
             order { productId quantity }
           }
@@ -679,6 +704,7 @@ export interface BasketProduct {
     quantity: number;
     /** ₹ per unit, if Milkbasket said. */
     price: number | null;
+    imageUrl: string;
 }
 
 export interface BasketView {
@@ -726,6 +752,7 @@ export function parseBasket(body: unknown): BasketView | null {
                 size: isObject(p.weight) ? text(p.weight.text).slice(0, 40) : '',
                 quantity,
                 price: cleanPrice(priceObj ? priceObj.value : null),
+                imageUrl: productImage(p),
             });
         }
     }
@@ -827,4 +854,102 @@ export async function refreshAuth(deps: MilkbasketDeps, refreshToken: string): P
             ? { ok: false, kind: 'unexpected', retryable: false, message: 'Unknown error' }
             : { ...failure, message: failure.kind === 'timeout' ? 'Milkbasket didn’t answer while renewing the login.' : failure.message };
     }
+}
+
+/* ─── Searching Milkbasket's products (getSearchProducts) ────────────── */
+
+export const SEARCH_QUERY = `query getSearchProducts($searchPayload: SearchProductListFilterInput!, $cityId: Float!, $page: PaginationInput!, $filters: String, $sort: SortInput) {
+  getSearchProducts(
+    searchPayload: $searchPayload
+    cityId: $cityId
+    page: $page
+    filters: $filters
+    sort: $sort
+  ) {
+    products {
+      product {
+        id
+        name
+        category { name subCategory { name type } }
+        availability { isOos oos forcedOos maxQuantity cutOff { text } }
+        assets { image { url } }
+        weight { text }
+        price { mrp { amount value } price { amount value } }
+      }
+    }
+    pages { page hasNextPage records }
+  }
+}`;
+
+export interface SearchProduct {
+    productId: number;
+    name: string;
+    size: string;
+    /** Today's price (₹ per unit) and MRP, as Milkbasket shows them. */
+    price: number | null;
+    mrp: number | null;
+    imageUrl: string;
+    /** False when Milkbasket marks it out of stock. */
+    available: boolean;
+    /** Most you can order at once, if Milkbasket says. */
+    maxQuantity: number | null;
+    /** "Milk · Toned & Double Toned Milk" */
+    category: string;
+}
+
+export interface SearchResult {
+    products: SearchProduct[];
+    hasNextPage: boolean;
+    total: number | null;
+}
+
+export const SEARCH_LIMIT = 20;
+export const MAX_SEARCH_TEXT = 60;
+
+/** `data.getSearchProducts.products[].product` → products, one per id, as Milkbasket ranks them. */
+export function parseSearchProducts(body: unknown): SearchResult {
+    const data = isObject(body) && isObject(body.data) ? body.data : null;
+    const search = data && isObject(data.getSearchProducts) ? data.getSearchProducts : null;
+    const entries = search && Array.isArray(search.products) ? search.products : [];
+    const seen = new Set<number>();
+    const products: SearchProduct[] = [];
+    for (const entry of entries) {
+        const p = isObject(entry) && isObject(entry.product) ? entry.product : null;
+        const productId = p ? Number(p.id) : NaN;
+        if (!p || !isProductId(productId) || seen.has(productId)) continue;
+        seen.add(productId);
+        const price = isObject(p.price) ? p.price : {};
+        const availability = isObject(p.availability) ? p.availability : {};
+        const category = isObject(p.category) ? p.category : {};
+        const sub = isObject(category.subCategory) ? category.subCategory : {};
+        const max = Number(availability.maxQuantity);
+        products.push({
+            productId,
+            name: text(p.name).replace(/\s{2,}/g, ' ').slice(0, 120) || `Product ${productId}`,
+            size: isObject(p.weight) ? text(p.weight.text).slice(0, 40) : '',
+            price: cleanPrice(isObject(price.price) ? price.price.value : null),
+            mrp: cleanPrice(isObject(price.mrp) ? price.mrp.value : null),
+            imageUrl: productImage(p),
+            available: !(availability.isOos === true || availability.oos === true || availability.forcedOos === true),
+            maxQuantity: Number.isInteger(max) && max > 0 ? max : null,
+            category: [text(category.name), text(sub.type) || text(sub.name)].filter(Boolean).join(' · ').slice(0, 80),
+        });
+    }
+    const pages = search && isObject(search.pages) ? search.pages : {};
+    const total = Number(pages.records);
+    return { products, hasNextPage: pages.hasNextPage === true, total: Number.isFinite(total) ? total : null };
+}
+
+/** The variables Milkbasket's website sends with a search. */
+export function searchVariables(searchText: string, cityId: string, page = 1): Record<string, unknown> {
+    return {
+        searchPayload: { searchText: searchText.trim().slice(0, MAX_SEARCH_TEXT), experimentId: 1, suggestedSearchText: '' },
+        cityId: Number(cityId),
+        page: { page, limit: SEARCH_LIMIT },
+    };
+}
+
+/** Search Milkbasket's products by name. Read-only; `cityId` is the city the search runs in. */
+export async function searchProducts(deps: MilkbasketDeps, searchText: string, cityId: string, page = 1): Promise<SearchResult> {
+    return parseSearchProducts(await readQuery(deps, 'getSearchProducts', SEARCH_QUERY, searchVariables(searchText, cityId, page)));
 }

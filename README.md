@@ -163,6 +163,7 @@ When a pantry item drops to **Quarter** (low) or **Empty**, the app can add it t
    ```env
    MILKBASKET_CITY_ID=1              # the cityid header on milkbasket.com requests
    MILKBASKET_HUB_ID=1               # the hubid header
+   MILKBASKET_SEARCH_CITY_ID=3       # optional; the cityId variable in milkbasket.com's getSearchProducts request (it can differ from the header); defaults to MILKBASKET_CITY_ID
    MB_HOUSEHOLD_IDS=owner_uid        # households allowed to use this account, comma-separated; Admin → Milkbasket shows yours
    AUTO_ADD_PRICE_LIMIT=150          # optional; items priced below this (₹ per unit) are added without asking
    MILKBASKET_APP_VERSION=9.0.10.0   # optional; change it if Milkbasket starts asking for a newer app version
@@ -189,8 +190,15 @@ When a pantry item drops to **Quarter** (low) or **Empty**, the app can add it t
 Everyone in the household except the cook sees Milkbasket on **Groceries**:
 
 - **Waiting for an OK**: items at or above the price limit, or with no known price. Anyone can change the quantity and Approve or Reject; Admin is not needed.
-- **Cart button** on each item in the shopping list: adds it to the Milkbasket basket now, with a quantity you choose, and marks it bought. If the item isn't linked to a product yet, pick one from your recent orders; it is remembered for next time. Items already in the basket or being added show that instead.
-- **Milkbasket tab**: what is in the Milkbasket basket for the next delivery, with the bill. It is read with `getExtendedBasket` and cached for 3 minutes; **Refresh** reads it again. Change quantities or remove items in the Milkbasket app.
+- **Cart button** on each item in the shopping list: adds it to the Milkbasket basket now, with a quantity you choose, and marks it bought. Items already in the basket or being added show that instead.
+  - The dialog shows the linked product with its picture.
+  - **Change product** opens a picker. **Search Milkbasket**, the default, shows today's price, MRP and stock, and you can't pick products that are out of stock. **My orders** lists products from your recent orders.
+  - If the item isn't linked yet, the picker opens straight away and searches for the item's name.
+  - A picked product becomes the item's link from then on. **Save link** changes the link without adding anything.
+  - If Milkbasket refuses the add (for example out of stock), the dialog stays open so you can pick another product.
+- **Milkbasket tab**: what is in the Milkbasket basket for the next delivery, with pictures and the bill. It is read with `getExtendedBasket` and cached for 3 minutes; **Refresh** reads it again. Change quantities or remove items in the Milkbasket app.
+
+Product pictures come from Milkbasket's own CDN (`static-milkbasket.cdn.jio.com`). Only https addresses on Milkbasket's hosts are kept. They appear in search results, recent orders, the basket, approvals, mappings and activity.
 
 ### Mapping items
 

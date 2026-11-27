@@ -13,10 +13,12 @@ import {
     addManually,
     approveRequest,
     getOrderHistory,
+    linkProduct,
     rejectRequest,
     removeMapping,
     retryRequest,
     saveMapping,
+    searchMilkbasket,
     setMappingEnabled,
     testConnection,
     updateMilkbasketLogin,
@@ -24,6 +26,7 @@ import {
     type ManualAddInput,
     type MappingInput,
 } from '../server/milkbasket';
+import type { SearchResult } from './logic';
 import type { MilkbasketResult, OrderHistoryResult, PurchaseRequestRow } from './types';
 
 const noSession = { ok: false, error: 'auth' } as const;
@@ -90,4 +93,16 @@ export async function loadMilkbasketOrderHistory(refresh: boolean): Promise<Milk
 export async function saveMilkbasketLogin(refreshToken: string, authToken: string): Promise<MilkbasketResult> {
     const user = await getSessionUser();
     return user ? updateMilkbasketLogin(user, refreshToken, authToken) : noSession;
+}
+
+/** Owner or member: search Milkbasket's products by name. */
+export async function searchMilkbasketProducts(searchText: string): Promise<MilkbasketResult<SearchResult>> {
+    const user = await getSessionUser();
+    return user ? searchMilkbasket(user, searchText) : noSession;
+}
+
+/** Owner or member: link an item to a Milkbasket product (from search or recent orders) without adding it. */
+export async function linkMilkbasketProduct(itemId: string, product: { milkbasketProductId: number; productName: string; size?: string; price: number | null; imageUrl?: string }): Promise<MilkbasketResult> {
+    const user = await getSessionUser();
+    return user ? linkProduct(user, itemId, product) : noSession;
 }

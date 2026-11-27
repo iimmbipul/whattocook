@@ -9,6 +9,8 @@ export interface PurchaseRequestRow {
     milkbasketProductId: number | null;
     productName: string | null;
     size: string;
+    /** The product picture on Milkbasket’s CDN, or ''. */
+    imageUrl: string;
     quantity: number;
     /** ₹ per unit used (or to be used) for the add. */
     price: number | null;
@@ -102,7 +104,7 @@ export type MilkbasketResult<T = undefined> =
 /** One pantry item's Milkbasket state, for the Groceries list. */
 export interface MilkbasketItemState {
     /** The product it orders, or null if it isn't mapped yet. */
-    product: { milkbasketProductId: number; productName: string; size: string; price: number | null; defaultQuantity: number } | null;
+    product: { milkbasketProductId: number; productName: string; size: string; price: number | null; defaultQuantity: number; imageUrl: string } | null;
     /** Its open request (waiting, being added), if any. */
     openStatus: RequestStatus | null;
     /** When it was last added to the basket, within the duplicate window. */

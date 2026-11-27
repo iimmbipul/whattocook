@@ -6,7 +6,7 @@ import type { User } from '@/types/meal';
 import { adminFirestore } from './firebaseAdmin';
 import { isSafeDocId } from './guards';
 import { isMilkbasketHousehold, runAfterResponse } from './milkbasketTrigger';
-import { getDeps, loginStatus, readWithLogin, renewedDeps, saveLogin } from './milkbasketAuth';
+import { baseConfig, getDeps, loginStatus, readWithLogin, renewedDeps, saveLogin } from './milkbasketAuth';
 import { listPantryItems, restockFromBasket } from './grocery';
 import { actorFromUser } from '../actor';
 import { localTime } from '../ratings/logic';
@@ -83,6 +83,7 @@ function readMapping(itemId: string, data: DocumentData | undefined): M.ProductM
         defaultQuantity: M.cleanQuantity(data.defaultQuantity, 1),
         priceUpdatedAt: num(data.priceUpdatedAt),
         enabled: data.enabled !== false,
+        imageUrl: M.cleanImageUrl(data.imageUrl),
     };
 }
 
@@ -97,6 +98,7 @@ function readRequest(id: string, data: DocumentData): PurchaseRequestRow {
         milkbasketProductId: M.isProductId(data.milkbasketProductId) ? data.milkbasketProductId : null,
         productName: text(data.productName, 120) || null,
         size: text(data.size, 40),
+        imageUrl: M.cleanImageUrl(data.imageUrl),
         quantity: M.cleanQuantity(data.quantity, 1),
         price: M.cleanPrice(data.price),
         status: M.isRequestStatus(data.status) ? data.status : 'failed',
@@ -131,6 +133,7 @@ function productFields(mapping: M.ProductMapping): DocumentData {
         productName: mapping.productName,
         size: mapping.size,
         price: mapping.price,
+        imageUrl: mapping.imageUrl,
     };
 }
 
@@ -538,6 +541,7 @@ export interface MappingInput {
     milkbasketProductId: number;
     productName: string;
     size?: string;
+    imageUrl?: string;
     price: number | string | null;
     defaultQuantity: number;
     enabled: boolean;
@@ -569,24 +573,46 @@ export async function saveMapping(user: User, input: unknown): Promise<Milkbaske
     const waiting = await fs.collection(requestsPath(hid)).where('pantryItemId', '==', itemId).get();
     if (!pantryItem && !waiting.docs.some(d => d.data().status === 'needs_mapping')) return { ok: false, error: 'not-found' };
 
-    const ref = fs.doc(`${mappingsPath(hid)}/${itemId}`);
-    const nowMs = Date.now();
-    const previous = readMapping(itemId, (await ref.get()).data());
-    const mapping: M.ProductMapping = {
-        itemId,
+    await applyMapping(fs, hid, itemId, {
         milkbasketProductId: productId,
         productName,
         size: text(r.size, 40),
         price,
+        imageUrl: M.cleanImageUrl(r.imageUrl),
         defaultQuantity: quantity,
-        priceUpdatedAt: price === null ? null : previous && previous.price === price ? previous.priceUpdatedAt ?? nowMs : nowMs,
         enabled: r.enabled,
+    }, user.uid, waiting.docs);
+    return { ok: true };
+}
+
+/**
+ * Save an item's mapping, then move on what waits for it: a "needs mapping"
+ * request goes by the normal rules (below the limit → added now; otherwise →
+ * approval), and a waiting approval picks up the new product and price.
+ */
+async function applyMapping(
+    fs: Fs,
+    hid: string,
+    itemId: string,
+    input: Omit<M.ProductMapping, 'itemId' | 'priceUpdatedAt'>,
+    byUid: string,
+    waitingDocs: FirebaseFirestore.QueryDocumentSnapshot[],
+): Promise<M.ProductMapping> {
+    const ref = fs.doc(`${mappingsPath(hid)}/${itemId}`);
+    const nowMs = Date.now();
+    const previous = readMapping(itemId, (await ref.get()).data());
+    const samePrice = previous && previous.milkbasketProductId === input.milkbasketProductId && previous.price === input.price;
+    const mapping: M.ProductMapping = {
+        ...input,
+        itemId,
+        priceUpdatedAt: input.price === null ? null : samePrice ? previous.priceUpdatedAt ?? nowMs : nowMs,
     };
-    await ref.set({ ...mapping, updatedAtMs: nowMs, updatedBy: user.uid });
+    await ref.set({ ...mapping, updatedAtMs: nowMs, updatedBy: byUid });
+    const productName = mapping.productName;
 
     const settings = await readSettings(fs, hid);
     let queued = false;
-    for (const d of waiting.docs) {
+    for (const d of waitingDocs) {
         const status = d.data().status;
         if (status === 'needs_mapping') {
             const route = M.routeMapped(mapping, settings);
@@ -601,7 +627,7 @@ export async function saveMapping(user: User, input: unknown): Promise<Milkbaske
         }
     }
     if (queued) await runWorker(hid);
-    return { ok: true };
+    return mapping;
 }
 
 /** Remove a mapping. Approvals waiting on it go back to "needs mapping"; queued adds go ahead. */
@@ -617,7 +643,7 @@ export async function removeMapping(user: User, itemId: unknown): Promise<Milkba
     for (const d of snap.docs) {
         if (d.data().status !== 'pending_approval') continue;
         await moveRequest(fs, d.ref, 'needs_mapping', nowMs, 'Mapping removed', {
-            milkbasketProductId: null, productName: null, size: '', price: null, reason: 'unmapped',
+            milkbasketProductId: null, productName: null, size: '', price: null, imageUrl: '', reason: 'unmapped',
         }, ['pending_approval']);
     }
     return { ok: true };
@@ -837,7 +863,7 @@ export async function getHouseholdMilkbasketView(user: User, now: Date = new Dat
     const state = (id: string) => (items[id] ??= { product: null, openStatus: null, addedAt: null });
     mappingSnap.docs.forEach(d => {
         const m = readMapping(d.id, d.data());
-        if (m) state(d.id).product = { milkbasketProductId: m.milkbasketProductId, productName: m.productName, size: m.size, price: m.price, defaultQuantity: m.defaultQuantity };
+        if (m) state(d.id).product = { milkbasketProductId: m.milkbasketProductId, productName: m.productName, size: m.size, price: m.price, defaultQuantity: m.defaultQuantity, imageUrl: m.imageUrl };
     });
     const open = openSnap.docs.map(d => readRequest(d.id, d.data()));
     open.forEach(r => { state(r.pantryItemId).openStatus = r.status; });
@@ -884,7 +910,7 @@ export interface ManualAddInput {
     itemId: string;
     quantity: number;
     /** Needed only when the item has no mapping yet: the product picked from recent orders. Saved as its mapping. */
-    product?: { milkbasketProductId: number; productName: string; size?: string; price: number | null } | null;
+    product?: { milkbasketProductId: number; productName: string; size?: string; price: number | null; imageUrl?: string } | null;
     /** Needed only when the mapping has no known price. */
     price?: number | null;
 }
@@ -910,7 +936,7 @@ export async function addManually(user: User, input: unknown): Promise<Milkbaske
         const productId = typeof p.milkbasketProductId === 'string' ? Number(p.milkbasketProductId) : p.milkbasketProductId;
         const productName = text(p.productName, 120);
         if (!M.isProductId(productId) || !productName) return { ok: false, error: 'invalid' };
-        picked = { itemId, milkbasketProductId: productId, productName, size: text(p.size, 40), price: M.cleanPrice(p.price), defaultQuantity: quantity, priceUpdatedAt: null, enabled: true };
+        picked = { itemId, milkbasketProductId: productId, productName, size: text(p.size, 40), price: M.cleanPrice(p.price), defaultQuantity: quantity, priceUpdatedAt: null, enabled: true, imageUrl: M.cleanImageUrl(p.imageUrl) };
     }
     const givenPrice = M.cleanPrice(r.price);
 
@@ -930,7 +956,8 @@ export async function addManually(user: User, input: unknown): Promise<Milkbaske
             tx.get(fs.collection(requestsPath(hid)).where('pantryItemId', '==', itemId)),
         ]);
         const saved = readMapping(itemId, mappingSnap.data());
-        const mapping = saved ?? picked;
+        // A product picked now (from search or recent orders) becomes the item's link, keeping its auto-order setting.
+        const mapping = picked ? { ...picked, enabled: saved?.enabled ?? true, defaultQuantity: saved?.defaultQuantity ?? quantity } : saved;
         if (!mapping) return { error: 'unmapped' };
         const price = mapping.price ?? givenPrice;
         if (price === null) return { error: 'price-needed' };
@@ -974,7 +1001,7 @@ export async function addManually(user: User, input: unknown): Promise<Milkbaske
             requestId = ref.id;
         }
         // Remember the product picked for an unmapped item, and a price typed for an unpriced one.
-        if (!saved && picked) tx.set(mappingRef, { ...picked, price, priceUpdatedAt: nowMs, updatedAtMs: nowMs, updatedBy: user.uid });
+        if (picked) tx.set(mappingRef, { ...mapping, price, priceUpdatedAt: nowMs, updatedAtMs: nowMs, updatedBy: user.uid });
         else if (saved && saved.price === null) tx.update(mappingRef, { price, priceUpdatedAt: nowMs });
         tx.set(guard, { lastRequestId: requestId, updatedAtMs: nowMs }, { merge: true });
         return { requestId };
@@ -996,5 +1023,51 @@ export async function updateMilkbasketLogin(user: User, refreshToken: unknown, a
             : { ok: false, error: 'invalid' };
     }
     await setProblem(adminFirestore(), user.householdId, null);
+    return { ok: true };
+}
+
+/* ─── Owners and members: search Milkbasket, link a product ──────────── */
+
+/** Search Milkbasket's products by name (read-only). Owners and members. */
+export async function searchMilkbasket(user: User, searchText: unknown): Promise<MilkbasketResult<M.SearchResult>> {
+    const denied = guardMember(user);
+    if (denied) return denied;
+    const query = typeof searchText === 'string' ? searchText.replace(/\s+/g, ' ').trim().slice(0, M.MAX_SEARCH_TEXT) : '';
+    if (query.length < 2) return { ok: false, error: 'invalid' };
+    try {
+        const cityId = baseConfig().searchCityId;
+        return { ok: true, data: await readWithLogin(deps => M.searchProducts(deps, query, cityId)) };
+    } catch (err) {
+        return { ok: false, error: 'milkbasket', message: err instanceof Error ? err.message : 'Milkbasket is not reachable.' };
+    }
+}
+
+/**
+ * Link a pantry item to a Milkbasket product (picked from search or recent
+ * orders), without adding anything. Anyone in the household may change it;
+ * the item's auto-order setting and default quantity stay as they were.
+ */
+export async function linkProduct(user: User, itemId: unknown, product: unknown): Promise<MilkbasketResult> {
+    const denied = guardMember(user);
+    if (denied) return denied;
+    if (!isSafeDocId(itemId) || !product || typeof product !== 'object') return { ok: false, error: 'invalid' };
+    const p = product as Record<string, unknown>;
+    const productId = typeof p.milkbasketProductId === 'string' ? Number(p.milkbasketProductId) : p.milkbasketProductId;
+    const productName = text(p.productName, 120);
+    if (!M.isProductId(productId) || !productName) return { ok: false, error: 'invalid' };
+    const hid = user.householdId;
+    const fs = adminFirestore();
+    if (!(await listPantryItems(hid)).some(i => i.itemId === itemId)) return { ok: false, error: 'not-found' };
+    const previous = readMapping(itemId, (await fs.doc(`${mappingsPath(hid)}/${itemId}`).get()).data());
+    const waiting = await fs.collection(requestsPath(hid)).where('pantryItemId', '==', itemId).get();
+    await applyMapping(fs, hid, itemId, {
+        milkbasketProductId: productId,
+        productName,
+        size: text(p.size, 40),
+        price: M.cleanPrice(p.price),
+        imageUrl: M.cleanImageUrl(p.imageUrl),
+        defaultQuantity: previous?.defaultQuantity ?? 1,
+        enabled: previous?.enabled ?? true,
+    }, user.uid, waiting.docs);
     return { ok: true };
 }
