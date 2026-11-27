@@ -9,6 +9,7 @@ import { adminFirestore } from './firebaseAdmin';
 import { COOKS_COLLECTION } from './currentUser';
 import { isSafeDocId } from './guards';
 import { findMeals } from './mealLookup';
+import { queueLevelChanges } from './milkbasketTrigger';
 import { generationProviderOptions, hasAnyAiProvider, runWithFallback } from '../aiModels';
 import { mealNameKey } from '../mealPhoto';
 import { localTime } from '../ratings/logic';
@@ -45,6 +46,10 @@ import type {
  * The hired cook (or the owner of a household with no cook) reports all four
  * levels in the daily stock check. Anyone in the household can mark an item
  * Out of stock or Full, add an item that isn't listed yet, and mark items bought.
+ *
+ * Level changes are handed to Milkbasket auto-order (src/lib/server/milkbasket.ts)
+ * after the response is sent; it only reads them and, when it adds an item to
+ * the basket, marks it bought through restockFromBasket.
  */
 
 type Fs = ReturnType<typeof adminFirestore>;
@@ -514,12 +519,14 @@ async function recordLevel(
     const nowMs = now.getTime();
     const ref = fs.doc(`${pantryPath(user.householdId)}/${itemId}`);
     let item: MarkedItem | null = null;
+    let from: G.ItemLevel = 'unknown';
     try {
         await fs.runTransaction(async tx => {
             const snap = await tx.get(ref);
             const catalogItem = catalog.items.get(itemId);
             if (!snap.exists && !catalogItem && !newItem) throw new GroceryNotFound();
             const rec = snap.exists ? readPantry(itemId, snap.data()!, today) : catalogItem ? recordFromCatalog(catalogItem, today) : newItem!;
+            from = rec.state.level;
             const { state, change } = G.applyReport(rec.state, level, today, settings.learning);
             const updated: PantryRecord = {
                 ...rec,
@@ -552,6 +559,7 @@ async function recordLevel(
     const marked = item as MarkedItem | null;
     if (!marked) return { ok: false, error: 'failed' };
     if (level === 'empty') await notifyOutOfStock(fs, user, [marked.en], nowMs);
+    queueLevelChanges(user.householdId, [{ itemId, name: marked.en, from, to: level }]);
     return { ok: true, item: marked };
 }
 
@@ -663,13 +671,16 @@ export async function restockItems(user: User, itemIds: unknown, now: Date = new
     const today = localTime(now).date;
     const nowMs = now.getTime();
     const refs = ids.map(id => fs.doc(`${pantryPath(user.householdId)}/${id}`));
+    const changes: { itemId: string; name: string; from: string; to: string }[] = [];
     try {
         await fs.runTransaction(async tx => {
+            changes.length = 0;
             const snaps = await tx.getAll(...refs);
             snaps.forEach((snap, i) => {
                 const catalogItem = catalog.items.get(ids[i]);
                 if (!snap.exists && !catalogItem) return;
                 const rec = snap.exists ? readPantry(ids[i], snap.data()!, today) : recordFromCatalog(catalogItem!, today);
+                changes.push({ itemId: ids[i], name: rec.en, from: rec.state.level, to: 'full' });
                 const updated: PantryRecord = {
                     ...rec,
                     state: G.applyRestock(rec.state, today),
@@ -683,11 +694,74 @@ export async function restockItems(user: User, itemIds: unknown, now: Date = new
                 tx.set(refs[i].collection('events').doc(), { type: user.role === 'cook' ? 'arrived' : 'bought', level: 'full', by: user.uid, byName: actorName(user) || null, role: user.role, at: nowMs, date: today });
             });
         });
+        queueLevelChanges(user.householdId, changes);
         return { ok: true };
     } catch (err) {
         console.error('[grocery] restockItems failed:', err);
         return { ok: false, error: 'failed' };
     }
+}
+
+/**
+ * Milkbasket auto-order added an item to the basket: mark it bought (Full, a
+ * new cycle), like members' Bought. Returns false if the item isn't saved.
+ */
+export async function restockFromBasket(
+    householdId: string,
+    itemId: string,
+    info: { requestId: string; productName: string },
+    now: Date = new Date(),
+): Promise<boolean> {
+    if (!isSafeDocId(householdId) || !isSafeDocId(itemId)) return false;
+    const fs = adminFirestore();
+    const today = localTime(now).date;
+    const nowMs = now.getTime();
+    const ref = fs.doc(`${pantryPath(householdId)}/${itemId}`);
+    return fs.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return false;
+        const rec = readPantry(itemId, snap.data()!, today);
+        const updated: PantryRecord = {
+            ...rec,
+            state: G.applyRestock(rec.state, today),
+            active: true,
+            virtual: false,
+            levelAtMs: nowMs,
+            reportedByName: 'Milkbasket',
+            reportedByRole: null,
+        };
+        tx.set(ref, toDoc(updated, nowMs), { merge: true });
+        tx.set(ref.collection('events').doc(), {
+            type: 'bought',
+            level: 'full',
+            by: 'milkbasket',
+            byName: 'Milkbasket',
+            role: null,
+            at: nowMs,
+            date: today,
+            purchaseRequestId: info.requestId,
+            productName: info.productName.slice(0, 120),
+        });
+        return true;
+    });
+}
+
+/** The household's saved pantry items (names, level, tracked), for Milkbasket mapping. */
+export async function listPantryItems(householdId: string, now: Date = new Date()): Promise<{
+    itemId: string;
+    en: string;
+    hi: string;
+    or: string;
+    level: G.ItemLevel;
+    active: boolean;
+}[]> {
+    if (!isSafeDocId(householdId)) return [];
+    const today = localTime(now).date;
+    const snap = await adminFirestore().collection(pantryPath(householdId)).get();
+    return snap.docs.map(d => {
+        const r = readPantry(d.id, d.data(), today);
+        return { itemId: r.id, en: r.en, hi: r.hi, or: r.or, level: r.state.level, active: r.active };
+    });
 }
 
 /** Stop (or resume) asking about an item. The cook, or the owner. */
@@ -850,14 +924,17 @@ export async function addNoteItems(user: User, items: unknown, now: Date = new D
 
     const refs = clean.map(c => fs.doc(`${pantryPath(user.householdId)}/${c.rec.id}`));
     const emptyNames: string[] = [];
+    const levelChanges: { itemId: string; name: string; from: string; to: string }[] = [];
     try {
         await fs.runTransaction(async tx => {
+            levelChanges.length = 0;
             const snaps = await tx.getAll(...refs);
             snaps.forEach((snap, i) => {
                 const { level } = clean[i];
                 let rec = snap.exists ? readPantry(clean[i].rec.id, snap.data()!, today) : clean[i].rec;
                 let change: G.IntervalChange | null = null;
                 if (level) {
+                    levelChanges.push({ itemId: rec.id, name: rec.en, from: rec.state.level, to: level });
                     const applied = G.applyReport(rec.state, level, today, settings.learning);
                     change = applied.change;
                     rec = { ...rec, state: applied.state, levelAtMs: nowMs, reportedByName: actorName(user) || null, reportedByRole: user.role, lastChange: change ? { ...change, date: today } : rec.lastChange };
@@ -872,6 +949,7 @@ export async function addNoteItems(user: User, items: unknown, now: Date = new D
         return { ok: false, error: 'failed' };
     }
     await notifyOutOfStock(fs, user, emptyNames, nowMs);
+    queueLevelChanges(user.householdId, levelChanges);
     return { ok: true };
 }
 

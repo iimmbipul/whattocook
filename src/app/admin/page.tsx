@@ -10,6 +10,7 @@ import { getAdminCapabilities, migrateStoredCredentials } from '@/lib/adminData'
 import { UserRole } from '@/types/meal';
 import BulkResponsibilityManager from '@/components/BulkResponsibilityManager';
 import GroceryAdmin from '@/components/grocery/GroceryAdmin';
+import MilkbasketAdmin from '@/components/milkbasket/MilkbasketAdmin';
 import MultiDatePicker from '@/components/MultiDatePicker';
 import { isSameDay } from 'date-fns';
 import { useLocale } from '@/context/LocaleContext';
@@ -271,6 +272,9 @@ export default function AdminPage() {
 
                 {/* Grocery settings (owner) and the default catalogue (app admin) */}
                 <GroceryAdmin />
+
+                {/* Milkbasket auto-order (owner; households in MB_HOUSEHOLD_IDS) */}
+                <MilkbasketAdmin />
 
                 {/* App-admin maintenance (shared templates) */}
                 {appAdmin ? (
