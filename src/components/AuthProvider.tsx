@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { refreshSession, restoreSession } from '@/lib/auth';
 import { User } from '@/types/meal';
 
@@ -52,6 +52,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [restored, setRestored] = useState(false);
+    // Bumped whenever a page sets the user (sign-in, onboarding, sign-out). The
+    // start-up session check below drops its answer if this changed meanwhile,
+    // so a slow check can't sign out someone who has just signed in.
+    const userSetByPage = useRef(0);
+    const setUserFromPage = useCallback((next: User | null) => {
+        userSetByPage.current += 1;
+        setUser(next);
+    }, []);
 
     // Keep the same object when the server confirms an unchanged account, so
     // effects keyed on `user` don't refetch their data a second time. The fresh
@@ -78,9 +86,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!restored) return;
 
         const checkAuth = async () => {
+            const startedAt = userSetByPage.current;
+            const overtaken = () => userSetByPage.current !== startedAt;
             try {
                 // 1. The httpOnly session cookie — verified and rolled forward by the server.
                 const refreshedUser = await refreshSession();
+                if (overtaken()) return;
                 if (refreshedUser) {
                     commitUser(refreshedUser);
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(refreshedUser));
@@ -101,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
 
                 const restoredUser = token ? await restoreSession(token) : null;
+                if (overtaken()) return;
                 if (restoredUser) {
                     commitUser(restoredUser);
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(restoredUser));
@@ -111,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } catch (err) {
                 // Network/server error: keep the stored token for the next attempt.
                 console.error('Session check failed', err);
-                setUser(null);
+                if (!overtaken()) setUser(null);
             } finally {
                 setLoading(false);
             }
@@ -128,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [user]);
 
     return (
-        <AuthContext.Provider value={{ user, loading, setUser }}>
+        <AuthContext.Provider value={{ user, loading, setUser: setUserFromPage }}>
             {children}
         </AuthContext.Provider>
     );

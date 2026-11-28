@@ -22,7 +22,19 @@
         "orDivider": "या",
         "phoneLabel": "फ़ोन नंबर",
         "pinLabel": "पिन",
-        "cookSubmit": "साइन इन करें"
+        "cookSubmit": "साइन इन करें",
+        "googleClosed": "साइन इन पूरा होने से पहले Google विंडो बंद हो गई। फिर से कोशिश करें, या इसी टैब में Google के पेज पर साइन इन करें।",
+        "googleClosedBrowser": "साइन इन पूरा होने से पहले Google विंडो बंद हो गई। फिर से कोशिश करें। अगर ऐसा बार-बार हो, तो WhatToCook को किसी दूसरे ऐप के अंदर नहीं, Chrome या Safari में खोलें।",
+        "googleSameTab": "इसी टैब में Google से जारी रखें",
+        "googleBlocked": "आपके ब्राउज़र ने Google साइन-इन विंडो रोक दी। इस साइट के लिए पॉप-अप की अनुमति दें, फिर से कोशिश करें।",
+        "googleUnsupported": "यह ब्राउज़र Google साइन-इन नहीं खोल सकता। WhatToCook को Chrome या Safari में खोलें।",
+        "googleDomain": "{{host}} के लिए Google साइन-इन सेट नहीं है। WhatToCook को उसके सामान्य लिंक से खोलें।",
+        "googleNetwork": "Google से कनेक्ट नहीं हो सका। अपना इंटरनेट कनेक्शन जाँचें और फिर से कोशिश करें।",
+        "inAppTitle": "साइन इन करने के लिए अपने ब्राउज़र में खोलें",
+        "inAppBody": "Google, {{app}} के अंदर साइन इन की अनुमति नहीं देता। इस पेज को Chrome या Safari में खोलें।",
+        "inAppBodyGeneric": "Google इस ऐप के अंदर साइन इन की अनुमति नहीं देता। इस पेज को Chrome या Safari में खोलें।",
+        "openInChrome": "Chrome में खोलें",
+        "copyLink": "लिंक कॉपी करें"
     },
     "dashboard": {
         "loading": "लोड हो रहा है...",

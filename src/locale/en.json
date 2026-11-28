@@ -31,7 +31,19 @@
         "cookSubmitting": "Signing in…",
         "cookInvalid": "That phone number and PIN don’t match.",
         "cookFailed": "Cook sign-in failed. Please try again.",
-        "backToGoogle": "Back to Google sign-in"
+        "backToGoogle": "Back to Google sign-in",
+        "googleClosed": "The Google window closed before sign-in finished. Try again, or sign in on Google's page in this tab.",
+        "googleClosedBrowser": "The Google window closed before sign-in finished. Try again. If it keeps happening, open WhatToCook in Chrome or Safari, not inside another app.",
+        "googleSameTab": "Continue with Google in this tab",
+        "googleBlocked": "Your browser blocked the Google sign-in window. Allow pop-ups for this site, then try again.",
+        "googleUnsupported": "This browser can't open Google sign-in. Open WhatToCook in Chrome or Safari.",
+        "googleDomain": "Google sign-in isn't set up for {{host}}. Open WhatToCook from its usual link.",
+        "googleNetwork": "Couldn't reach Google. Check your internet connection and try again.",
+        "inAppTitle": "Open in your browser to sign in",
+        "inAppBody": "Google doesn't allow signing in inside {{app}}. Open this page in Chrome or Safari.",
+        "inAppBodyGeneric": "Google doesn't allow signing in inside this app. Open this page in Chrome or Safari.",
+        "openInChrome": "Open in Chrome",
+        "copyLink": "Copy link"
     },
     "dashboard": {
         "loading": "Loading...",
