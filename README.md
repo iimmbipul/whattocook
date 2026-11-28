@@ -102,6 +102,29 @@ Visit [http://localhost:3000](http://localhost:3000)
 
 **Security:** see [docs/SECURITY.md](docs/SECURITY.md) — including the remaining step of moving the server to `firebase-admin` and deploying `firestore.rules`.
 
+### Google sign-in on every browser
+
+Google sign-in hands its result back through Firebase's sign-in helper (`/__/auth/handler`). By default the helper lives on `<project>.firebaseapp.com`, a different site from the app. Browsers that block third-party storage can lose the result there: the Google window closes and the page goes back to the sign-in button. These include Safari and iPhone home-screen apps, Brave, Firefox in strict mode, and Chrome with third-party cookies off.
+
+`next.config.ts` proxies `/__/auth/*` and `/__/firebase/*` to `<project>.firebaseapp.com`, so the helper can run on the app's own domain. To turn it on:
+
+1. In Google Cloud Console, go to **APIs & Services → Credentials** and open the OAuth client **Web client (auto created by Google Service)**. Under **Authorized redirect URIs**, add `https://<your-domain>/__/auth/handler`, for example `https://whattocook-amber.vercel.app/__/auth/handler`. Keep the existing firebaseapp.com entry.
+2. In Firebase Console, go to **Authentication → Settings → Authorized domains** and check that `<your-domain>` is listed.
+3. Set `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=<your-domain>` (no `https://`) in Vercel Production, then redeploy.
+
+After that, sign-in stays on the app's own site:
+- Phones and home-screen web apps sign in on Google's page in the same tab instead of a popup. On phones a popup opens as a separate tab, and the page waiting for it can be unloaded. Computers keep the popup.
+- If the browser blocks the popup, the app switches to same-tab sign-in on its own.
+
+Until step 3 is done, the popup works as before. The same goes for any other host that isn't the auth domain, such as preview deployments.
+
+The login page also says what went wrong instead of resetting silently:
+- **The Google window closed before sign-in finished.** When the helper is on the app's domain, the page offers **Continue with Google in this tab**.
+- **Blocked pop-ups, network problems, and a domain missing from Firebase's authorized list** each get their own message.
+- **Apps whose built-in browser Google refuses** show a notice to open the page in Chrome or Safari, with **Copy link** (and **Open in Chrome** on Android). These include Instagram, Facebook, LinkedIn, Snapchat and Android WebViews.
+
+For local testing, `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (together with `FIREBASE_AUTH_EMULATOR_HOST`) signs in against the Firebase Auth emulator. Never set it in production.
+
 ## 📁 Project Structure
 
 ```

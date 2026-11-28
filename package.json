@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/ratings.test.mjs tests/grocery.test.mjs tests/milkbasket.test.mjs"
+    "test": "node --test tests/ratings.test.mjs tests/grocery.test.mjs tests/milkbasket.test.mjs tests/googleSignIn.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.147",
